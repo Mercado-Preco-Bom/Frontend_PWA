@@ -3,11 +3,12 @@ import { Header } from './Header';
 
 export function MainLayout() {
   return (
-    <div className="h-screen w-screen bg-gray-50 flex flex-col font-sans text-gray-800 overflow-hidden">
+    <div className="min-h-screen bg-gray-50 flex flex-col w-full font-sans">
       <Header />
-      <div className="flex-1 w-full max-w-7xl mx-auto p-4 md:p-6 overflow-y-auto">
+      <main className="flex-1 w-full max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+
         <Outlet />
-      </div>
+      </main>
     </div>
   );
 }
