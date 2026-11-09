@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
 import { Package, CheckCircle2, Clock, Hourglass, Route, Map as MapIcon, Circle, Loader2 } from 'lucide-react';
+import { DeliveryMap } from '../../components/ui/DeliveryMap';
 
 interface DashboardData {
   metrics: {
@@ -121,14 +122,14 @@ export function Admin() {
 
       {/* MAPA E MOTORISTAS */}
       <div className="flex flex-col lg:flex-row gap-6">
-        <div className="flex-1 bg-blue-50/50 rounded-xl border border-gray-200 min-h-[400px] flex flex-col items-center justify-center relative overflow-hidden">
-          <div className="absolute inset-0 opacity-10" style={{ backgroundImage: 'radial-gradient(#1A4B9F 1px, transparent 1px)', backgroundSize: '20px 20px' }}></div>
-          <MapIcon size={48} className="text-blue-200 mb-3 z-10" />
-          <span className="text-blue-800 font-semibold z-10">Mapa da Região</span>
-          <span className="text-xs text-blue-500 z-10 mt-1 max-w-xs text-center">O mapa com GPS ao vivo será integrado aqui futuramente.</span>
+        
+        {/* O Mapa Real ocupa este espaço */}
+        <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-100 relative z-0">
+          <DeliveryMap drivers={data.drivers} />
         </div>
 
-        <div className="w-full lg:w-[320px] bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col min-h-[400px]">
+        {/* Lista de Motoristas */}
+        <div className="w-full lg:w-[320px] bg-white rounded-xl shadow-sm border border-gray-100 p-5 flex flex-col min-h-[400px] z-10">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-5">Motoristas</h3>
           <div className="flex-1 overflow-y-auto space-y-5">
             {data.drivers.length === 0 && <p className="text-sm text-gray-400">Nenhum motorista cadastrado.</p>}
@@ -147,9 +148,11 @@ export function Admin() {
                     <div className="bg-[#1A4B9F] text-white text-[10px] font-semibold px-2 py-1 rounded w-fit mb-2">
                       Em rota desde {formatTime(driver.currentDelivery?.startedAt)}
                     </div>
+                    {/* A linha que estava quebrada foi corrigida aqui */}
                     <p className="text-xs text-gray-500 leading-tight">
                       → {driver.currentDelivery?.customer?.neighborhood} - {driver.currentDelivery?.customer?.name.split(' ')[0]}
                     </p>
+                    
                   </>
                 ) : (
                   <div className="text-[#E65100] text-xs font-semibold mb-1 flex items-center gap-1.5">
