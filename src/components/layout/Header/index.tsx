@@ -16,7 +16,7 @@ export function Header() {
   };
 
   return (
-    <header className="bg-[#1A4B9F] text-white px-4 py-3 shadow-md z-10 w-full flex-shrink-0">
+    <header className="bg-[#2E3192] text-white px-4 py-3 shadow-md z-10 w-full flex-shrink-0">
       <div className="flex justify-between items-center w-full max-w-7xl mx-auto">
         
         {/* Logo na parte da esquerda */}

@@ -50,9 +50,10 @@ const handleLogin = async (e: React.FormEvent) => {
       <div className="bg-white w-full max-w-md rounded-2xl shadow-xl border border-gray-100 overflow-hidden">
         
         {/* Cabeçalho do Login */}
-        <div className="bg-[#2B358F] p-8 flex flex-col items-center justify-center">
-          <div className="relative h-20 w-[85px] overflow-hidden mb-2">
-             <img src={logoImg} alt="Logo PreçoBom" className="absolute top-1/2 left-1/2 -translate-x-[48%] -translate-y-1/2 h-[120%] max-w-none object-contain" />
+        <div className="bg-[#2E3192] p-8 flex flex-col items-center justify-center">
+          {/* Container do logo com tamanho aumentado */}
+          <div className="relative h-28 w-[120px] overflow-hidden mb-2">
+             <img src={logoImg} alt="Logo PreçoBom" className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 h-[120%] max-w-none object-contain" />
           </div>
           <p className="text-blue-200 text-sm font-medium mt-2">Acesso ao Sistema</p>
         </div>
