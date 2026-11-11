@@ -15,7 +15,7 @@ export default function App() {
         <Route element={<MainLayout />}>
           
           {/* Rotas exclusivas para o CAIXA */}
-          <Route element={<ProtectedRoute allowedRoles={['CAIXA']} />}>
+          <Route element={<ProtectedRoute allowedRoles={['CASHIER']} />}>
             <Route path="/caixa" element={<Caixa />} />
           </Route>
 

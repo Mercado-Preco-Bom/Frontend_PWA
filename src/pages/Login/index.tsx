@@ -15,7 +15,7 @@ const handleLogin = async (e: React.FormEvent) => {
     setLoading(true);
     
     try {
-      const response = await axios.post(`${import.meta.env.VITE_API_URL}/login`, { email, password });
+      const response = await axios.post(`${import.meta.env.VITE_API_URL}/users/login`, { email, password });
       const { user, token } = response.data;
       
       localStorage.setItem('@PrecoBom:user', JSON.stringify(user));

@@ -24,7 +24,11 @@ export function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
   // Se o usuário não tiver permissão para esta tela, redireciona para a tela correta dele
   if (!allowedRoles.includes(user.role)) {
     if (user.role === 'ADMIN') return <Navigate to="/admin" replace />;
-    if (user.role === 'CAIXA') return <Navigate to="/caixa" replace />;
+    if (user.role === 'CASHIER') return <Navigate to="/caixa" replace />;
+
+    // Role desconhecida: limpa a sessão e volta pro login (evita liberar a tela por engano)
+    localStorage.removeItem('@PrecoBom:user');
+    return <Navigate to="/login" replace />;
   }
 
   // Se passou em todas as validações, renderiza a página normalmente

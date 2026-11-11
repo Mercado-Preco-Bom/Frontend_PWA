@@ -39,7 +39,7 @@ export function Header() {
 
         {/* Meio */}
         <nav className="hidden md:flex items-center gap-6">
-          {user?.role === 'CAIXA' && (
+          {user?.role === 'CASHIER' && (
             <Link to="/caixa" className={`flex items-center gap-2 text-sm font-medium ${location.pathname === '/caixa' ? 'text-white' : 'text-blue-300 hover:text-white transition'}`}>
               <ShoppingCart size={16} /> Dashboard Caixa
             </Link>
@@ -60,7 +60,7 @@ export function Header() {
               </div>
               <div className="flex flex-col text-left leading-none">
                 <span className="font-bold text-[11px] capitalize">{user.name.split(' ')[0]}</span>
-                <span className="text-[9px] text-gray-500 font-normal">{user.role === 'CAIXA' ? 'Operador(a)' : 'Gestão'}</span>
+                <span className="text-[9px] text-gray-500 font-normal">{user.role === 'CASHIER' ? 'Operador(a)' : 'Gestão'}</span>
               </div>
             </div>
           )}
