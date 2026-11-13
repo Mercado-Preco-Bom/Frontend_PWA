@@ -305,7 +305,7 @@ export function Caixa() {
     if (!currentDelivery) return;
 
     try {
-      // Coordenadas fixas do Mercado para exemplo (você pode usar geolocalização se preferir)
+      // Coordenadas fixas do Mercado para exemplo
       const latMercado = -24.4882; 
       const lngMercado = -47.8447;
 
