@@ -10,6 +10,9 @@ export default defineConfig({
     VitePWA({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
+      workbox: {
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'] // Garante o cache offline da interface
+      },
       manifest: {
         name: 'PreçoBom Logística',
         short_name: 'PreçoBom',
