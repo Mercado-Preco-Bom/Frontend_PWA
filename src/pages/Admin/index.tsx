@@ -19,7 +19,9 @@ export interface DashboardDriver {
 
 interface DashboardData {
   metrics: { totalToday: number; completed: number; pending: number; avgIdleTime: number; avgRouteTime: number; };
-  drivers: Array<DashboardDriver>; history: Array<DashboardDelivery>;
+  drivers: Array<DashboardDriver>; 
+  history: Array<DashboardDelivery>;
+  baseReturns?: Array<{ driverId: string; arrivedAt: string }>; // NOVO: Histórico de retornos da Cerca Virtual
 }
 
 const formatTime = (isoString?: string | null) => {
@@ -100,13 +102,22 @@ export function Admin() {
     }
   };
 
-  // 🚀 LÓGICA DE AGRUPAMENTO DE VIAGENS (Cálculo Rico)
+  // 🚀 LÓGICA DEFINITIVA COM A CERCA VIRTUAL E GATILHOS DO GPS
   const getTripsByDriver = () => {
     if (!data) return {};
     const tripsByDriver: Record<string, any[]> = {};
     const deliveriesByDriver: Record<string, DashboardDelivery[]> = {};
+    const returnsByDriver: Record<string, number[]> = {};
+
+    // 1. Agrupa os retornos físicos à base (em timestamps)
+    if (data.baseReturns) {
+      data.baseReturns.forEach(br => {
+        if (!returnsByDriver[br.driverId]) returnsByDriver[br.driverId] = [];
+        returnsByDriver[br.driverId].push(new Date(br.arrivedAt).getTime());
+      });
+    }
     
-    // Separa as entregas por motorista
+    // 2. Separa as entregas por motorista
     data.history.forEach(d => {
       if (!d.driver) return;
       if (!deliveriesByDriver[d.driver.name]) deliveriesByDriver[d.driver.name] = [];
@@ -121,26 +132,37 @@ export function Admin() {
 
       if (sorted.length === 0) return;
 
+      const driverId = sorted[0].driverId!;
+      const driverReturns = (returnsByDriver[driverId] || []).sort((a, b) => a - b);
+
       const trips = [];
       let currentTrip = [sorted[0]];
 
       for (let i = 1; i < sorted.length; i++) {
         const prev = sorted[i - 1];
         const curr = sorted[i];
-        const prevEnd = prev.finishedAt ? new Date(prev.finishedAt).getTime() : now;
-        const currStart = new Date(curr.startedAt!).getTime();
         
-        // Simulação temporária da "Cerca": Se o buraco for <= 45 min, estão na mesma viagem.
-        if ((currStart - prevEnd) / 60000 <= 45) { 
-          currentTrip.push(curr);
+        const prevStart = new Date(prev.startedAt!).getTime();
+        const currStart = new Date(curr.startedAt!).getTime();
+        const prevEnd = prev.finishedAt ? new Date(prev.finishedAt).getTime() : now;
+        
+        // A MÁGICA: Houve algum registo de GPS (Cerca Virtual) entre o início da entrega anterior e a atual?
+        const furouCercaFisicamente = driverReturns.some(rt => rt > prevStart && rt <= currStart);
+        
+        // TRAVA DE SEGURANÇA: Se o telemóvel ficar sem bateria e ele voltar, não queremos uma viagem falsa de 3 horas.
+        // Se houver um buraco maior do que 90 minutos entre as entregas, encerramos o lote por precaução.
+        const timeoutSeguranca = (currStart - prevEnd) / 60000 > 90;
+
+        if (furouCercaFisicamente || timeoutSeguranca) { 
+          trips.push(currentTrip); // Fecha a viagem
+          currentTrip = [curr]; // Abre nova viagem
         } else {
-          trips.push(currentTrip);
-          currentTrip = [curr];
+          currentTrip.push(curr); // Continua na rua na mesma viagem
         }
       }
       trips.push(currentTrip);
 
-      // Processa os dados de cada Viagem
+      // Processa os dados de cada Viagem e calcula a ociosidade/tempo na rua perfeitamente
       tripsByDriver[driverName] = trips.map((tripDeliveries, index) => {
         const first = tripDeliveries[0];
         const last = tripDeliveries[tripDeliveries.length - 1];
@@ -278,7 +300,6 @@ export function Admin() {
         </div>
       </div>
 
-      {/* NOVA SEÇÃO DE HISTÓRICO: AGRUPADA POR VIAGENS */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 overflow-hidden flex flex-col">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
@@ -326,7 +347,6 @@ export function Admin() {
                         </div>
                       </div>
 
-                      {/* Lista de pacotes entregues na viagem */}
                       <div className="space-y-1">
                         {viagem.entregas.map((entrega: any, idx: number) => (
                           <div key={entrega.id} className="flex justify-between items-center text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer" onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}>
@@ -356,7 +376,6 @@ export function Admin() {
         )}
       </div>
 
-      {/* MODAL DE GERENCIAMENTO DE USUÁRIOS FICA AQUI INTACTO */}
       {showUserModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
