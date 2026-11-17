@@ -80,7 +80,8 @@ export function Admin() {
     e.preventDefault();
     setLoadingUser(true);
     try {
-      await axios.post(`${API_URL}/users/register`, newUser);
+      // Alterado de /users/register para /users (que chama o create com hash)
+      await axios.post(`${API_URL}/users`, newUser);
       setNewUser({ name: '', email: '', password: '', role: 'MOTORISTA' });
       fetchUsers();
       alert('Usuário cadastrado com sucesso!');
