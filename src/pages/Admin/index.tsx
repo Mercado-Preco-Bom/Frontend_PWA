@@ -66,7 +66,6 @@ export function Admin() {
     return () => { clearInterval(interval); clearInterval(clock); };
   }, [API_URL]);
 
-  // Funções de Gerenciamento de Usuários
   const fetchUsers = async () => {
     try {
       const response = await axios.get(`${API_URL}/users`);
@@ -80,7 +79,6 @@ export function Admin() {
     e.preventDefault();
     setLoadingUser(true);
     try {
-      // Alterado de /users/register para /users (que chama o create com hash)
       await axios.post(`${API_URL}/users`, newUser);
       setNewUser({ name: '', email: '', password: '', role: 'MOTORISTA' });
       fetchUsers();
@@ -102,6 +100,74 @@ export function Admin() {
     }
   };
 
+  // 🚀 LÓGICA DE AGRUPAMENTO DE VIAGENS (Cálculo Rico)
+  const getTripsByDriver = () => {
+    if (!data) return {};
+    const tripsByDriver: Record<string, any[]> = {};
+    const deliveriesByDriver: Record<string, DashboardDelivery[]> = {};
+    
+    // Separa as entregas por motorista
+    data.history.forEach(d => {
+      if (!d.driver) return;
+      if (!deliveriesByDriver[d.driver.name]) deliveriesByDriver[d.driver.name] = [];
+      deliveriesByDriver[d.driver.name].push(d);
+    });
+
+    Object.keys(deliveriesByDriver).forEach(driverName => {
+      // Pega apenas entregas iniciadas e ordena por horário
+      const sorted = deliveriesByDriver[driverName]
+         .filter(d => d.startedAt)
+         .sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
+
+      if (sorted.length === 0) return;
+
+      const trips = [];
+      let currentTrip = [sorted[0]];
+
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = sorted[i - 1];
+        const curr = sorted[i];
+        const prevEnd = prev.finishedAt ? new Date(prev.finishedAt).getTime() : now;
+        const currStart = new Date(curr.startedAt!).getTime();
+        
+        // Simulação temporária da "Cerca": Se o buraco for <= 45 min, estão na mesma viagem.
+        if ((currStart - prevEnd) / 60000 <= 45) { 
+          currentTrip.push(curr);
+        } else {
+          trips.push(currentTrip);
+          currentTrip = [curr];
+        }
+      }
+      trips.push(currentTrip);
+
+      // Processa os dados de cada Viagem
+      tripsByDriver[driverName] = trips.map((tripDeliveries, index) => {
+        const first = tripDeliveries[0];
+        const last = tripDeliveries[tripDeliveries.length - 1];
+        
+        const idleTime = first.assignedAt && first.startedAt 
+          ? Math.max(0, Math.round((new Date(first.startedAt).getTime() - new Date(first.assignedAt).getTime()) / 60000))
+          : 0;
+
+        const endTime = last.finishedAt ? new Date(last.finishedAt).getTime() : now;
+        const streetTime = Math.max(0, Math.round((endTime - new Date(first.startedAt!).getTime()) / 60000));
+
+        return {
+          id: `viagem-${driverName}-${index}`,
+          numero: index + 1,
+          primeiraSaida: first.startedAt,
+          ultimaConclusao: last.finishedAt,
+          qtdEntregas: tripDeliveries.length,
+          ociosidadeMercado: idleTime,
+          tempoTotalRua: streetTime,
+          entregas: tripDeliveries
+        };
+      });
+    });
+
+    return tripsByDriver;
+  };
+
   if (loading || !data) {
     return (
       <div className="flex-1 flex items-center justify-center h-full">
@@ -109,6 +175,8 @@ export function Admin() {
       </div>
     );
   }
+
+  const viagensAgrupadas = getTripsByDriver();
 
   return (
     <div className="flex flex-col gap-6 h-full pb-8">
@@ -189,14 +257,14 @@ export function Admin() {
                 </div>
 
                 {driver.connectionStatus === 'DESCONECTADO' ? (
-                  <div className="text-gray-400 text-xs font-medium mb-1">Motorista desconectado do aplicativo</div>
+                  <div className="text-gray-400 text-xs font-medium mb-1">Motorista desconectado</div>
                 ) : driver.status === 'EM_ROTA' && driver.currentDelivery?.startedAt ? (
                   <>
                     <div className="bg-[#1A4B9F] text-white text-[10px] font-semibold px-2 py-1 rounded w-fit mb-2">
                       Tempo de rua: {calcMinutes(driver.currentDelivery.startedAt, now)}
                     </div>
                     <p className="text-xs text-gray-500 leading-tight">
-                      → Em direção à {driver.currentDelivery?.customer?.neighborhood}
+                      → Indo para {driver.currentDelivery?.customer?.neighborhood}
                     </p>
                   </>
                 ) : (
@@ -210,74 +278,85 @@ export function Admin() {
         </div>
       </div>
 
+      {/* NOVA SEÇÃO DE HISTÓRICO: AGRUPADA POR VIAGENS */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 overflow-hidden flex flex-col">
         <div className="flex items-center justify-between mb-5">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
-            Histórico de entregas de hoje
+            Relatório de Viagens e Entregas (Hoje)
           </h3>
-          {selectedDeliveryId && <button onClick={() => setSelectedDeliveryId(null)} className="text-xs font-semibold text-[#1A4B9F] hover:underline">Mostrar todas no mapa</button>}
         </div>
 
-        <div className="overflow-x-auto">
-          <table className="w-full text-left text-sm whitespace-nowrap min-w-[900px]">
-            <thead>
-              <tr className="text-gray-400 border-b border-gray-100 text-[11px]">
-                <th className="pb-3 font-medium uppercase">Cliente/ID</th>
-                <th className="pb-3 font-medium uppercase text-center">Motorista</th>
-                <th className="pb-3 font-medium uppercase text-center">Iniciado</th>
-                <th className="pb-3 font-medium uppercase text-center text-[#E53E3E]">Ociosidade (Mercado)</th>
-                <th className="pb-3 font-medium uppercase text-center text-[#1A4B9F]">Tempo Rota (Rua)</th>
-                <th className="pb-3 font-medium uppercase text-left">Status do Pedido</th>
-              </tr>
-            </thead>
-            <tbody className="text-gray-700">
-              {data.history.length === 0 && (
-                <tr><td colSpan={6} className="py-4 text-center text-gray-400 text-sm">Nenhuma entrega registrada hoje.</td></tr>
-              )}
-
-              {data.history.map((delivery) => {
-                const isSelected = selectedDeliveryId === delivery.id;
-                return (
-                  <tr
-                    key={delivery.id}
-                    onClick={() => setSelectedDeliveryId(isSelected ? null : delivery.id)}
-                    className={`border-b border-gray-50 cursor-pointer transition ${isSelected ? 'bg-blue-50/60' : 'hover:bg-gray-50'}`}
-                  >
-                    <td className="py-3.5">
-                      <div className="font-semibold text-gray-800 capitalize truncate max-w-[150px]">{delivery.customer.name}</div>
-                      <div className="text-gray-400 text-[10px]">#{delivery.id.split('-')[0]}</div>
-                    </td>
-                    <td className="py-3.5 text-center">
-                      {delivery.driver ? (
-                        <div className={`w-6 h-6 rounded-full ${getAvatarColor(delivery.driver.name)} text-white flex items-center justify-center text-[10px] font-bold mx-auto uppercase`} title={delivery.driver.name}>
-                          {delivery.driver.name.charAt(0)}
+        {Object.keys(viagensAgrupadas).length === 0 ? (
+          <p className="text-sm text-gray-400 text-center py-6">Nenhuma entrega registrada hoje.</p>
+        ) : (
+          <div className="space-y-6">
+            {Object.entries(viagensAgrupadas).map(([driverName, viagens]) => (
+              <div key={driverName} className="border border-gray-100 rounded-lg p-4 bg-gray-50/50">
+                <h4 className="font-bold text-[#1A4B9F] capitalize mb-3 flex items-center gap-2">
+                  <div className={`w-6 h-6 rounded-full ${getAvatarColor(driverName)} text-white flex items-center justify-center text-[10px] font-bold uppercase`}>
+                    {driverName.charAt(0)}
+                  </div>
+                  Motorista: {driverName}
+                </h4>
+                
+                <div className="space-y-4">
+                  {viagens.map(viagem => (
+                    <div key={viagem.id} className="bg-white border border-gray-200 rounded-lg p-4 shadow-sm hover:border-blue-200 transition-colors">
+                      <div className="flex flex-wrap gap-4 justify-between items-center mb-4 pb-3 border-b border-gray-50">
+                        <div>
+                          <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Viagem #{viagem.numero}</span>
+                          <div className="text-sm font-semibold text-gray-800 mt-1 flex items-center gap-2">
+                            {formatTime(viagem.primeiraSaida)} <span className="text-gray-300">→</span> {viagem.ultimaConclusao ? formatTime(viagem.ultimaConclusao) : <span className="text-blue-600 animate-pulse">Na rua</span>}
+                          </div>
                         </div>
-                      ) : '-'}
-                    </td>
-                    <td className="py-3.5 text-center text-gray-500">{formatTime(delivery.startedAt)}</td>
-                    <td className="py-3.5 text-center font-bold text-[#E53E3E]">
-                      {delivery.assignedAt && delivery.startedAt ? calcMinutes(delivery.assignedAt, delivery.startedAt) : '-'}
-                    </td>
-                    <td className="py-3.5 text-center font-bold text-[#1A4B9F]">
-                      {delivery.startedAt ? calcMinutes(delivery.startedAt, delivery.finishedAt || now) : '-'}
-                    </td>
-                    <td className="py-3.5 text-left">
-                      <span className={`text-[11px] font-bold px-3 py-1.5 rounded-md ${
-                          delivery.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-100' :
-                          delivery.status === 'IN_TRANSIT' && delivery.startedAt ? 'bg-blue-50 text-blue-700 border border-blue-100' : 'bg-orange-50 text-orange-700 border border-orange-100'
-                        }`}>
-                        {delivery.status === 'DELIVERED' ? `Entregue às ${formatTime(delivery.finishedAt)}` : delivery.status === 'IN_TRANSIT' && delivery.startedAt ? 'Em andamento' : 'Não iniciada'}
-                      </span>
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
+                        
+                        <div className="flex gap-6">
+                          <div className="text-center">
+                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Ociosidade (Loja)</div>
+                            <div className="text-sm font-bold text-[#E53E3E] bg-red-50 px-2 py-0.5 rounded text-center inline-block">{viagem.ociosidadeMercado} min</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Tempo na Rua</div>
+                            <div className="text-sm font-bold text-[#1A4B9F] bg-blue-50 px-2 py-0.5 rounded text-center inline-block">{viagem.tempoTotalRua} min</div>
+                          </div>
+                          <div className="text-center">
+                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Entregas Feitas</div>
+                            <div className="text-sm font-bold text-gray-800 bg-gray-100 px-3 py-0.5 rounded text-center inline-block">{viagem.qtdEntregas}</div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Lista de pacotes entregues na viagem */}
+                      <div className="space-y-1">
+                        {viagem.entregas.map((entrega: any, idx: number) => (
+                          <div key={entrega.id} className="flex justify-between items-center text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer" onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}>
+                            <div className="flex items-center gap-3">
+                              <span className="font-bold text-gray-300 w-4">{idx + 1}.</span>
+                              <div>
+                                <span className="font-semibold text-gray-700 capitalize">{entrega.customer.name}</span>
+                                <span className="text-[11px] text-gray-400 ml-2">({entrega.customer.neighborhood})</span>
+                              </div>
+                            </div>
+                            <div className="flex items-center gap-3">
+                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
+                                  entrega.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
+                                }`}>
+                                  {entrega.status === 'DELIVERED' ? `Entregue às ${formatTime(entrega.finishedAt)}` : 'Em andamento'}
+                                </span>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
-      {/* MODAL DE GERENCIAMENTO DE USUÁRIOS */}
+      {/* MODAL DE GERENCIAMENTO DE USUÁRIOS FICA AQUI INTACTO */}
       {showUserModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
@@ -288,8 +367,6 @@ export function Admin() {
             </div>
             
             <div className="flex flex-col md:flex-row h-full overflow-hidden">
-              
-              {/* Formulário de Cadastro */}
               <div className="w-full md:w-1/3 p-5 border-r border-gray-100 bg-gray-50 overflow-y-auto">
                 <h4 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                   <UserPlus size={16} className="text-[#1A4B9F]" /> Novo Usuário
@@ -321,7 +398,6 @@ export function Admin() {
                 </form>
               </div>
 
-              {/* Lista de Usuários Ativos */}
               <div className="w-full md:w-2/3 p-5 overflow-y-auto bg-white">
                 <h4 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
                   <Shield size={16} className="text-[#1A4B9F]" /> Usuários Cadastrados
@@ -364,7 +440,6 @@ export function Admin() {
                   </table>
                 </div>
               </div>
-
             </div>
           </div>
         </div>
