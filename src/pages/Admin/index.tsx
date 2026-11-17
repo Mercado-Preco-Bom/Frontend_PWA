@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle } from 'lucide-react';
+import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
 
 export interface DashboardDelivery {
@@ -27,7 +27,6 @@ const formatTime = (isoString?: string | null) => {
   return new Date(isoString).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
 };
 
-// NOVO: Função que calcula minutos exatos entre duas datas
 const calcMinutes = (start?: string | null, end?: string | null | number) => {
   if (!start) return '-';
   const endTime = end ? (typeof end === 'number' ? end : new Date(end).getTime()) : Date.now();
@@ -46,18 +45,61 @@ export function Admin() {
   const [selectedDeliveryId, setSelectedDeliveryId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
+  // Estados do Modal de Usuários
+  const [showUserModal, setShowUserModal] = useState(false);
+  const [usersList, setUsersList] = useState<any[]>([]);
+  const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'MOTORISTA' });
+  const [loadingUser, setLoadingUser] = useState(false);
+
+  const API_URL = import.meta.env.VITE_API_URL;
+
   useEffect(() => {
     async function fetchDashboard() {
       try {
-        const response = await axios.get(`${import.meta.env.VITE_API_URL}/admin/dashboard`);
+        const response = await axios.get(`${API_URL}/admin/dashboard`);
         setData(response.data);
       } catch (error) {} finally { setLoading(false); }
     }
     fetchDashboard();
     const interval = setInterval(fetchDashboard, 5000);
-    const clock = setInterval(() => setNow(Date.now()), 60000); // Atualiza os tempos a cada minuto
+    const clock = setInterval(() => setNow(Date.now()), 60000);
     return () => { clearInterval(interval); clearInterval(clock); };
-  }, []);
+  }, [API_URL]);
+
+  // Funções de Gerenciamento de Usuários
+  const fetchUsers = async () => {
+    try {
+      const response = await axios.get(`${API_URL}/users`);
+      setUsersList(response.data);
+    } catch (error) {
+      console.error('Erro ao buscar usuários:', error);
+    }
+  };
+
+  const handleRegisterUser = async (e: React.FormEvent) => {
+    e.preventDefault();
+    setLoadingUser(true);
+    try {
+      await axios.post(`${API_URL}/users/register`, newUser);
+      setNewUser({ name: '', email: '', password: '', role: 'MOTORISTA' });
+      fetchUsers();
+      alert('Usuário cadastrado com sucesso!');
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Erro ao cadastrar usuário.');
+    } finally {
+      setLoadingUser(false);
+    }
+  };
+
+  const handleDeleteUser = async (id: string) => {
+    if (!window.confirm('Tem certeza que deseja excluir este usuário? Esta ação não pode ser desfeita.')) return;
+    try {
+      await axios.delete(`${API_URL}/users/${id}`);
+      fetchUsers();
+    } catch (error) {
+      alert('Erro ao excluir usuário.');
+    }
+  };
 
   if (loading || !data) {
     return (
@@ -74,9 +116,17 @@ export function Admin() {
           <h2 className="text-xl sm:text-2xl font-bold text-[#1A4B9F]">Gestão de Entregas</h2>
           <p className="text-xs sm:text-sm text-gray-500 mt-1">Monitoramento em tempo real</p>
         </div>
-        <div className="flex items-center gap-2 text-green-600 bg-green-50 border border-green-100 px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm">
-          <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
-          GPS ao vivo
+        <div className="flex items-center gap-3">
+          <button 
+            onClick={() => { setShowUserModal(true); fetchUsers(); }}
+            className="flex items-center gap-2 bg-[#1A4B9F] text-white px-4 py-1.5 rounded-full text-xs font-semibold shadow-sm hover:bg-blue-800 transition-colors"
+          >
+            <Users size={14} /> Gerenciar Equipe
+          </button>
+          <div className="flex items-center gap-2 text-green-600 bg-green-50 border border-green-100 px-3 py-1.5 rounded-full text-xs font-semibold shadow-sm">
+            <div className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></div>
+            GPS ao vivo
+          </div>
         </div>
       </div>
 
@@ -204,17 +254,12 @@ export function Admin() {
                       ) : '-'}
                     </td>
                     <td className="py-3.5 text-center text-gray-500">{formatTime(delivery.startedAt)}</td>
-                    
-                    {/* NOVO: Tempo que o motorista ficou no mercado (ociosidade) */}
                     <td className="py-3.5 text-center font-bold text-[#E53E3E]">
                       {delivery.assignedAt && delivery.startedAt ? calcMinutes(delivery.assignedAt, delivery.startedAt) : '-'}
                     </td>
-                    
-                    {/* NOVO: Tempo que o motorista ficou na rua para essa entrega */}
                     <td className="py-3.5 text-center font-bold text-[#1A4B9F]">
                       {delivery.startedAt ? calcMinutes(delivery.startedAt, delivery.finishedAt || now) : '-'}
                     </td>
-
                     <td className="py-3.5 text-left">
                       <span className={`text-[11px] font-bold px-3 py-1.5 rounded-md ${
                           delivery.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-100' :
@@ -230,6 +275,99 @@ export function Admin() {
           </table>
         </div>
       </div>
+
+      {/* MODAL DE GERENCIAMENTO DE USUÁRIOS */}
+      {showUserModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
+            
+            <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2"><Users size={18} /> Gerenciar Equipe</h3>
+              <button onClick={() => setShowUserModal(false)} className="text-blue-200 hover:text-white"><X size={20} /></button>
+            </div>
+            
+            <div className="flex flex-col md:flex-row h-full overflow-hidden">
+              
+              {/* Formulário de Cadastro */}
+              <div className="w-full md:w-1/3 p-5 border-r border-gray-100 bg-gray-50 overflow-y-auto">
+                <h4 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <UserPlus size={16} className="text-[#1A4B9F]" /> Novo Usuário
+                </h4>
+                <form onSubmit={handleRegisterUser} className="space-y-4">
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Nome Completo *</label>
+                    <input required type="text" value={newUser.name} onChange={e => setNewUser({...newUser, name: e.target.value})} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Nome do funcionário" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">E-mail de Acesso *</label>
+                    <input required type="email" value={newUser.email} onChange={e => setNewUser({...newUser, email: e.target.value})} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="email@precobom.com" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Senha de Acesso *</label>
+                    <input required type="password" value={newUser.password} onChange={e => setNewUser({...newUser, password: e.target.value})} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite uma senha segura" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Cargo / Função *</label>
+                    <select value={newUser.role} onChange={e => setNewUser({...newUser, role: e.target.value})} className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm">
+                      <option value="MOTORISTA">Motorista (App Mobile)</option>
+                      <option value="CAIXA">Caixa (PWA)</option>
+                      <option value="ADMIN">Administrador (PWA)</option>
+                    </select>
+                  </div>
+                  <button type="submit" disabled={loadingUser} className="w-full bg-[#1A4B9F] text-white font-bold text-sm py-3 mt-2 rounded-lg shadow-sm hover:bg-blue-800 active:bg-blue-900 transition-colors disabled:opacity-50">
+                    {loadingUser ? 'Cadastrando...' : 'Cadastrar Usuário'}
+                  </button>
+                </form>
+              </div>
+
+              {/* Lista de Usuários Ativos */}
+              <div className="w-full md:w-2/3 p-5 overflow-y-auto bg-white">
+                <h4 className="text-sm font-bold text-gray-800 mb-4 flex items-center gap-2">
+                  <Shield size={16} className="text-[#1A4B9F]" /> Usuários Cadastrados
+                </h4>
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left text-sm whitespace-nowrap">
+                    <thead>
+                      <tr className="text-gray-400 border-b border-gray-100 text-[11px] uppercase">
+                        <th className="pb-3 font-medium">Nome</th>
+                        <th className="pb-3 font-medium">E-mail</th>
+                        <th className="pb-3 font-medium">Cargo</th>
+                        <th className="pb-3 font-medium text-center">Ações</th>
+                      </tr>
+                    </thead>
+                    <tbody className="text-gray-700">
+                      {usersList.length === 0 && (
+                        <tr><td colSpan={4} className="py-4 text-center text-gray-400 text-sm">Nenhum usuário cadastrado.</td></tr>
+                      )}
+                      {usersList.map((u) => (
+                        <tr key={u.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                          <td className="py-3 font-semibold text-gray-800 capitalize">{u.name}</td>
+                          <td className="py-3 text-gray-500">{u.email}</td>
+                          <td className="py-3">
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
+                              u.role === 'ADMIN' ? 'bg-purple-50 text-purple-700' :
+                              u.role === 'CAIXA' ? 'bg-blue-50 text-blue-700' :
+                              'bg-orange-50 text-orange-700'
+                            }`}>
+                              {u.role}
+                            </span>
+                          </td>
+                          <td className="py-3 text-center">
+                            <button onClick={() => handleDeleteUser(u.id)} className="text-red-400 hover:text-red-600 transition-colors" title="Excluir usuário">
+                              <Trash2 size={16} className="mx-auto" />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
