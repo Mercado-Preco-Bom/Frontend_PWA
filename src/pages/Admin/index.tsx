@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield } from 'lucide-react';
+import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
 
 export interface DashboardDelivery {
@@ -21,12 +21,16 @@ interface DashboardData {
   metrics: { totalToday: number; completed: number; pending: number; avgIdleTime: number; avgRouteTime: number; };
   drivers: Array<DashboardDriver>; 
   history: Array<DashboardDelivery>;
-  baseReturns?: Array<{ driverId: string; arrivedAt: string }>; // NOVO: Histórico de retornos da Cerca Virtual
+  baseReturns?: Array<{ driverId: string; arrivedAt: string }>;
 }
 
 const formatTime = (isoString?: string | null) => {
   if (!isoString) return '-';
   return new Date(isoString).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+};
+
+const formatDate = (isoString: string) => {
+  return new Date(isoString).toLocaleDateString('pt-BR');
 };
 
 const calcMinutes = (start?: string | null, end?: string | null | number) => {
@@ -47,11 +51,21 @@ export function Admin() {
   const [selectedDeliveryId, setSelectedDeliveryId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
-  // Estados do Modal de Usuários
+  // Estados dos Modais
   const [showUserModal, setShowUserModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  
+  // Estados para Gestão de Usuários
   const [usersList, setUsersList] = useState<any[]>([]);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'MOTORISTA' });
   const [loadingUser, setLoadingUser] = useState(false);
+
+  // Estados para o Histórico Filtrável
+  const [historyData, setHistoryData] = useState<DashboardDelivery[]>([]);
+  const [loadingHistory, setLoadingHistory] = useState(false);
+  const [startDate, setStartDate] = useState('');
+  const [endDate, setEndDate] = useState('');
+  const [historySearch, setHistorySearch] = useState('');
 
   const API_URL = import.meta.env.VITE_API_URL;
 
@@ -65,6 +79,14 @@ export function Admin() {
     fetchDashboard();
     const interval = setInterval(fetchDashboard, 5000);
     const clock = setInterval(() => setNow(Date.now()), 60000);
+    
+    // Define as datas padrão para o filtro de histórico (últimos 7 dias)
+    const end = new Date();
+    const start = new Date();
+    start.setDate(end.getDate() - 7);
+    setEndDate(end.toISOString().split('T')[0]);
+    setStartDate(start.toISOString().split('T')[0]);
+
     return () => { clearInterval(interval); clearInterval(clock); };
   }, [API_URL]);
 
@@ -102,14 +124,28 @@ export function Admin() {
     }
   };
 
-  // 🚀 LÓGICA DEFINITIVA COM A CERCA VIRTUAL E GATILHOS DO GPS
+  const fetchHistory = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    setLoadingHistory(true);
+    try {
+      const response = await axios.get(`${API_URL}/admin/history`, {
+        params: { startDate, endDate }
+      });
+      setHistoryData(response.data);
+    } catch (error) {
+      alert('Erro ao buscar histórico.');
+    } finally {
+      setLoadingHistory(false);
+    }
+  };
+
+  // 🚀 LÓGICA TRANSPARENTE: Mostra tudo, pendente, em rota e entregue.
   const getTripsByDriver = () => {
     if (!data) return {};
     const tripsByDriver: Record<string, any[]> = {};
     const deliveriesByDriver: Record<string, DashboardDelivery[]> = {};
     const returnsByDriver: Record<string, number[]> = {};
 
-    // 1. Agrupa os retornos físicos à base (em timestamps)
     if (data.baseReturns) {
       data.baseReturns.forEach(br => {
         if (!returnsByDriver[br.driverId]) returnsByDriver[br.driverId] = [];
@@ -117,7 +153,7 @@ export function Admin() {
       });
     }
     
-    // 2. Separa as entregas por motorista
+    // Guarda na memória todas as entregas do motorista independentemente do status
     data.history.forEach(d => {
       if (!d.driver) return;
       if (!deliveriesByDriver[d.driver.name]) deliveriesByDriver[d.driver.name] = [];
@@ -125,10 +161,10 @@ export function Admin() {
     });
 
     Object.keys(deliveriesByDriver).forEach(driverName => {
-      // Pega apenas entregas iniciadas e ordena por horário
-      const sorted = deliveriesByDriver[driverName]
-         .filter(d => d.startedAt)
-         .sort((a, b) => new Date(a.startedAt!).getTime() - new Date(b.startedAt!).getTime());
+      // Ordena por ordem de criação
+      const sorted = deliveriesByDriver[driverName].sort((a, b) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      );
 
       if (sorted.length === 0) return;
 
@@ -142,27 +178,22 @@ export function Admin() {
         const prev = sorted[i - 1];
         const curr = sorted[i];
         
-        const prevStart = new Date(prev.startedAt!).getTime();
-        const currStart = new Date(curr.startedAt!).getTime();
+        const prevStart = prev.startedAt ? new Date(prev.startedAt).getTime() : new Date(prev.createdAt).getTime();
+        const currStart = curr.startedAt ? new Date(curr.startedAt).getTime() : new Date(curr.createdAt).getTime();
         const prevEnd = prev.finishedAt ? new Date(prev.finishedAt).getTime() : now;
         
-        // A MÁGICA: Houve algum registo de GPS (Cerca Virtual) entre o início da entrega anterior e a atual?
         const furouCercaFisicamente = driverReturns.some(rt => rt > prevStart && rt <= currStart);
-        
-        // TRAVA DE SEGURANÇA: Se o telemóvel ficar sem bateria e ele voltar, não queremos uma viagem falsa de 3 horas.
-        // Se houver um buraco maior do que 90 minutos entre as entregas, encerramos o lote por precaução.
         const timeoutSeguranca = (currStart - prevEnd) / 60000 > 90;
 
         if (furouCercaFisicamente || timeoutSeguranca) { 
-          trips.push(currentTrip); // Fecha a viagem
-          currentTrip = [curr]; // Abre nova viagem
+          trips.push(currentTrip);
+          currentTrip = [curr]; 
         } else {
-          currentTrip.push(curr); // Continua na rua na mesma viagem
+          currentTrip.push(curr);
         }
       }
       trips.push(currentTrip);
 
-      // Processa os dados de cada Viagem e calcula a ociosidade/tempo na rua perfeitamente
       tripsByDriver[driverName] = trips.map((tripDeliveries, index) => {
         const first = tripDeliveries[0];
         const last = tripDeliveries[tripDeliveries.length - 1];
@@ -172,7 +203,7 @@ export function Admin() {
           : 0;
 
         const endTime = last.finishedAt ? new Date(last.finishedAt).getTime() : now;
-        const streetTime = Math.max(0, Math.round((endTime - new Date(first.startedAt!).getTime()) / 60000));
+        const streetTime = first.startedAt ? Math.max(0, Math.round((endTime - new Date(first.startedAt).getTime()) / 60000)) : 0;
 
         return {
           id: `viagem-${driverName}-${index}`,
@@ -200,6 +231,12 @@ export function Admin() {
 
   const viagensAgrupadas = getTripsByDriver();
 
+  const filteredHistory = historyData.filter(h => 
+    h.customer.name.toLowerCase().includes(historySearch.toLowerCase()) || 
+    h.driver?.name.toLowerCase().includes(historySearch.toLowerCase()) ||
+    h.customer.neighborhood?.toLowerCase().includes(historySearch.toLowerCase())
+  );
+
   return (
     <div className="flex flex-col gap-6 h-full pb-8">
       <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
@@ -208,6 +245,12 @@ export function Admin() {
           <p className="text-xs sm:text-sm text-gray-500 mt-1">Monitoramento em tempo real</p>
         </div>
         <div className="flex items-center gap-3">
+          <button 
+            onClick={() => { setShowHistoryModal(true); fetchHistory(); }}
+            className="flex items-center gap-2 bg-green-600 text-white px-4 py-1.5 rounded-full text-xs font-semibold shadow-sm hover:bg-green-700 transition-colors"
+          >
+            <Calendar size={14} /> Histórico Filtrado
+          </button>
           <button 
             onClick={() => { setShowUserModal(true); fetchUsers(); }}
             className="flex items-center gap-2 bg-[#1A4B9F] text-white px-4 py-1.5 rounded-full text-xs font-semibold shadow-sm hover:bg-blue-800 transition-colors"
@@ -327,7 +370,10 @@ export function Admin() {
                         <div>
                           <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Viagem #{viagem.numero}</span>
                           <div className="text-sm font-semibold text-gray-800 mt-1 flex items-center gap-2">
-                            {formatTime(viagem.primeiraSaida)} <span className="text-gray-300">→</span> {viagem.ultimaConclusao ? formatTime(viagem.ultimaConclusao) : <span className="text-blue-600 animate-pulse">Na rua</span>}
+                            {viagem.primeiraSaida ? formatTime(viagem.primeiraSaida) : 'Aguardando saída'} 
+                            {viagem.primeiraSaida && <span className="text-gray-300">→</span>}
+                            {viagem.primeiraSaida && !viagem.ultimaConclusao && <span className="text-blue-600 animate-pulse">Na rua</span>}
+                            {viagem.ultimaConclusao && formatTime(viagem.ultimaConclusao)}
                           </div>
                         </div>
                         
@@ -338,7 +384,7 @@ export function Admin() {
                           </div>
                           <div className="text-center">
                             <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Tempo na Rua</div>
-                            <div className="text-sm font-bold text-[#1A4B9F] bg-blue-50 px-2 py-0.5 rounded text-center inline-block">{viagem.tempoTotalRua} min</div>
+                            <div className="text-sm font-bold text-[#1A4B9F] bg-blue-50 px-2 py-0.5 rounded text-center inline-block">{viagem.tempoTotalRua > 0 ? `${viagem.tempoTotalRua} min` : '-'}</div>
                           </div>
                           <div className="text-center">
                             <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Entregas Feitas</div>
@@ -348,24 +394,34 @@ export function Admin() {
                       </div>
 
                       <div className="space-y-1">
-                        {viagem.entregas.map((entrega: any, idx: number) => (
-                          <div key={entrega.id} className="flex justify-between items-center text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer" onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}>
-                            <div className="flex items-center gap-3">
-                              <span className="font-bold text-gray-300 w-4">{idx + 1}.</span>
-                              <div>
-                                <span className="font-semibold text-gray-700 capitalize">{entrega.customer.name}</span>
-                                <span className="text-[11px] text-gray-400 ml-2">({entrega.customer.neighborhood})</span>
+                        {viagem.entregas.map((entrega: any, idx: number) => {
+                          let tagClass = 'bg-gray-50 text-gray-600 border border-gray-200';
+                          let tagText = 'Aguardando início';
+                          if (entrega.status === 'DELIVERED') {
+                            tagClass = 'bg-green-50 text-green-700 border border-green-100';
+                            tagText = `Entregue às ${formatTime(entrega.finishedAt)}`;
+                          } else if (entrega.status === 'IN_TRANSIT' && entrega.startedAt) {
+                            tagClass = 'bg-blue-50 text-blue-700 border border-blue-100';
+                            tagText = 'Em rota';
+                          }
+                          
+                          return (
+                            <div key={entrega.id} className="flex justify-between items-center text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer" onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}>
+                              <div className="flex items-center gap-3">
+                                <span className="font-bold text-gray-300 w-4">{idx + 1}.</span>
+                                <div>
+                                  <span className="font-semibold text-gray-700 capitalize">{entrega.customer.name}</span>
+                                  <span className="text-[11px] text-gray-400 ml-2">({entrega.customer.neighborhood})</span>
+                                </div>
+                              </div>
+                              <div className="flex items-center gap-3">
+                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${tagClass}`}>
+                                  {tagText}
+                                </span>
                               </div>
                             </div>
-                            <div className="flex items-center gap-3">
-                                <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
-                                  entrega.status === 'DELIVERED' ? 'bg-green-50 text-green-700 border border-green-100' : 'bg-blue-50 text-blue-700 border border-blue-100'
-                                }`}>
-                                  {entrega.status === 'DELIVERED' ? `Entregue às ${formatTime(entrega.finishedAt)}` : 'Em andamento'}
-                                </span>
-                            </div>
-                          </div>
-                        ))}
+                          );
+                        })}
                       </div>
                     </div>
                   ))}
@@ -376,11 +432,84 @@ export function Admin() {
         )}
       </div>
 
+      {showHistoryModal && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col h-[85vh]">
+            
+            <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center shrink-0">
+              <h3 className="font-bold flex items-center gap-2"><Calendar size={18} /> Histórico de Entregas</h3>
+              <button onClick={() => setShowHistoryModal(false)} className="text-blue-200 hover:text-white"><X size={20} /></button>
+            </div>
+            
+            <div className="p-4 bg-gray-50 border-b border-gray-100 shrink-0">
+              <form onSubmit={fetchHistory} className="flex flex-col sm:flex-row gap-3 items-end">
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Data Inicial</label>
+                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
+                </div>
+                <div className="flex-1 w-full">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Data Final</label>
+                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
+                </div>
+                <button type="submit" disabled={loadingHistory} className="bg-[#1A4B9F] text-white px-6 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-800 disabled:opacity-50 h-[38px] w-full sm:w-auto">
+                  {loadingHistory ? 'Buscando...' : 'Filtrar'}
+                </button>
+              </form>
+              
+              <div className="mt-4 relative">
+                <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
+                <input 
+                  type="text" 
+                  placeholder="Buscar por cliente, motorista ou bairro nos resultados abaixo..." 
+                  value={historySearch}
+                  onChange={e => setHistorySearch(e.target.value)}
+                  className="w-full border border-gray-300 rounded-lg p-2 pl-9 text-sm outline-none focus:border-[#1A4B9F]"
+                />
+              </div>
+            </div>
+
+            <div className="flex-1 overflow-y-auto p-0">
+              <table className="w-full text-left text-sm whitespace-nowrap">
+                <thead className="bg-white sticky top-0 shadow-sm">
+                  <tr className="text-gray-400 border-b border-gray-100 text-[11px] uppercase">
+                    <th className="p-4 font-medium">Data</th>
+                    <th className="p-4 font-medium">Cliente</th>
+                    <th className="p-4 font-medium">Local</th>
+                    <th className="p-4 font-medium">Motorista</th>
+                    <th className="p-4 font-medium">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="text-gray-700">
+                  {filteredHistory.length === 0 && (
+                    <tr><td colSpan={5} className="p-8 text-center text-gray-400 text-sm">Nenhuma entrega encontrada para este período.</td></tr>
+                  )}
+                  {filteredHistory.map((h) => (
+                    <tr key={h.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                      <td className="p-4 font-medium text-gray-600">{formatDate(h.createdAt)} <span className="text-[10px] ml-1">{formatTime(h.createdAt)}</span></td>
+                      <td className="p-4 font-semibold text-gray-800 capitalize">{h.customer.name}</td>
+                      <td className="p-4 text-gray-500">{h.customer.neighborhood}</td>
+                      <td className="p-4 text-gray-600">{h.driver?.name}</td>
+                      <td className="p-4">
+                        <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-green-50 text-green-700">Entregue às {formatTime(h.finishedAt)}</span>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            
+            <div className="bg-white border-t border-gray-100 p-3 shrink-0 flex justify-between items-center text-xs text-gray-500 font-semibold">
+              <span>Mostrando {filteredHistory.length} entregas</span>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showUserModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh]">
             
-            <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center">
+            <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center shrink-0">
               <h3 className="font-bold flex items-center gap-2"><Users size={18} /> Gerenciar Equipe</h3>
               <button onClick={() => setShowUserModal(false)} className="text-blue-200 hover:text-white"><X size={20} /></button>
             </div>

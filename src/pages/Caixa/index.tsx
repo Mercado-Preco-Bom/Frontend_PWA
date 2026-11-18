@@ -83,7 +83,7 @@ export function Caixa() {
   const [volume, setVolume] = useState(1);
   const [payment, setPayment] = useState('Dinheiro');
   const [changeFor, setChangeFor] = useState('');
-  const [description, setDescription] = useState(''); // NOVO: Campo de observação
+  const [description, setDescription] = useState('');
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
   const [activeTab, setActiveTab] = useState('PENDING');
@@ -101,7 +101,6 @@ export function Caixa() {
   const [selectedCity, setSelectedCity] = useState('Registro');
   const [customCity, setCustomCity] = useState('');
   const [rawNeighborhood, setRawNeighborhood] = useState('Centro');
-  const [isManualNeighborhood, setIsManualNeighborhood] = useState(false);
   const [streetSuggestions, setStreetSuggestions] = useState<ViaCepResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -132,7 +131,6 @@ export function Caixa() {
     } catch (error) {}
   };
 
-  // SINCRONIZAÇÃO OFFLINE: Envia pedidos salvos quando a rede volta
   const syncOfflineDeliveries = async () => {
     const pending = JSON.parse(localStorage.getItem('@PrecoBom:offline_deliveries') || '[]');
     if (pending.length === 0) return;
@@ -142,11 +140,11 @@ export function Caixa() {
       try {
         await axios.post(`${API_URL}/deliveries`, p);
       } catch (e: any) {
-        if (!e.response) remaining.push(p); // Continua offline, mantém na fila
+        if (!e.response) remaining.push(p);
       }
     }
     localStorage.setItem('@PrecoBom:offline_deliveries', JSON.stringify(remaining));
-    if (pending.length !== remaining.length) fetchDeliveries(); // Atualiza se enviou algo
+    if (pending.length !== remaining.length) fetchDeliveries();
   };
 
   useEffect(() => {
@@ -203,10 +201,30 @@ export function Caixa() {
     return () => clearTimeout(timer);
   }, [newCustomer.street, activeCityName, selectedCity, showSuggestions]);
 
+  const handleCityChange = (city: string) => {
+    setSelectedCity(city);
+    setStreetSuggestions([]);
+    setRawNeighborhood(city === 'Registro' ? 'Centro' : '');
+  };
+
+  const handleSelectSuggestion = (item: ViaCepResult) => {
+    setShowSuggestions(false);
+    setStreetSuggestions([]);
+    if (item.logradouro) setNewCustomer(prev => ({ ...prev, street: item.logradouro }));
+    if (item.bairro) {
+      const matchedBairro = BAIRROS_REGISTRO.find(b => b.toLowerCase() === item.bairro.toLowerCase());
+      if (selectedCity === 'Registro' && matchedBairro) {
+        setRawNeighborhood(matchedBairro);
+      } else {
+        setRawNeighborhood(item.bairro);
+      }
+    }
+  };
+
   const resetCustomerModal = () => {
     setNewCustomer({ name: '', phone: '', street: '', number: '', neighborhood: 'Centro', reference: '' });
     setSelectedCity('Registro'); setCustomCity(''); setRawNeighborhood('Centro');
-    setIsManualNeighborhood(false); setStreetSuggestions([]); setShowSuggestions(false); setShowCustomerModal(false);
+    setStreetSuggestions([]); setShowSuggestions(false); setShowCustomerModal(false);
   };
 
   const handleCreateCustomer = async (e: React.FormEvent) => {
@@ -239,7 +257,7 @@ export function Caixa() {
       boxCount: volume,
       paymentMethod: methodMap[payment],
       changeFor: payment === 'Dinheiro' && changeFor ? Number(changeFor) : null,
-      description: description.trim() || null, // Incluindo a descrição
+      description: description.trim() || null,
     };
 
     try {
@@ -248,7 +266,7 @@ export function Caixa() {
       fetchDeliveries();
       setActiveTab('PENDING');
     } catch (error: any) {
-      if (!error.response) { // Sem internet
+      if (!error.response) {
         const pending = JSON.parse(localStorage.getItem('@PrecoBom:offline_deliveries') || '[]');
         pending.push(payload);
         localStorage.setItem('@PrecoBom:offline_deliveries', JSON.stringify(pending));
@@ -282,6 +300,31 @@ export function Caixa() {
     }
   };
 
+  const handleSimularInicio = async (deliveryId: string, driverId: string) => {
+    try {
+      await axios.put(`${API_URL}/deliveries/${deliveryId}/start`, {
+        driverId: driverId,
+        latitude: -24.6934,
+        longitude: -48.0033
+      });
+      fetchDeliveries();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
+  const handleSimularFim = async (deliveryId: string) => {
+    try {
+      await axios.put(`${API_URL}/deliveries/${deliveryId}/finish`, {
+        latitude: -24.6950,
+        longitude: -48.0010
+      });
+      fetchDeliveries();
+    } catch (error) {
+      console.error(error);
+    }
+  };
+
   const todayKey = new Date(now).toDateString();
   const visibleDeliveries = deliveries.filter(d => {
     if (new Date(d.createdAt).toDateString() !== todayKey) return false;
@@ -292,7 +335,6 @@ export function Caixa() {
   const filteredDeliveries = visibleDeliveries.filter(d => d.status === activeTab);
   const countPending = visibleDeliveries.filter(d => d.status === 'PENDING').length;
   const countTransit = visibleDeliveries.filter(d => d.status === 'IN_TRANSIT').length;
-  const countDelivered = visibleDeliveries.filter(d => d.status === 'DELIVERED').length;
 
   const driverStatuses = useMemo<DriverStatus[]>(() => {
     return drivers.map(driver => {
@@ -314,25 +356,6 @@ export function Caixa() {
       };
     });
   }, [drivers, deliveries, todayKey]);
-
-  const getDriverFit = (delivery: Delivery, st?: DriverStatus) => {
-    if (!st) return { score: 0, hint: 'disponível' };
-    const bairro = normalize(delivery.customer.neighborhood);
-    const sameQueued = st.stops.filter(s => !s.left && bairro && normalize(s.neighborhood) === bairro).length;
-    const sameOnRoute = st.stops.filter(s => s.left && bairro && normalize(s.neighborhood) === bairro).length;
-    const place = delivery.customer.neighborhood || 'mesmo bairro';
-
-    if (sameQueued > 0) return { score: 4, hint: `já tem ${sameQueued} p/ ${place} · não saiu` };
-    if (st.state === 'AVAILABLE') {
-      const idle = st.freeSince ? ` há ${formatElapsed(st.freeSince, now)}` : '';
-      return { score: 3, hint: `disponível${idle}` };
-    }
-    if (st.state === 'ASSIGNED') return { score: 2, hint: `${st.queuedCount} atribuída(s) · não saiu` };
-    if (sameOnRoute > 0) return { score: 1, hint: `em rota p/ ${place}` };
-    return { score: 0, hint: st.departedAt ? `em rota há ${formatElapsed(st.departedAt, now)}` : 'em rota' };
-  };
-
-  const statusByDriver = new Map(driverStatuses.map(s => [s.driver.id, s]));
 
   return (
     <>
@@ -508,7 +531,7 @@ export function Caixa() {
                 } else if (delivery.status === 'IN_TRANSIT' && delivery.startedAt) {
                   tagColorClass = 'bg-[#1A4B9F] text-white'; tagText = 'Em rota';
                 } else if (delivery.status === 'IN_TRANSIT') {
-                  tagColorClass = 'bg-[#FFF3E0] text-[#E65100] border border-[#FFE0B2]'; tagText = 'Atribuída · não saiu';
+                  tagColorClass = 'bg-[#FFF3E0] text-[#E65100] border border-[#FFE0B2]'; tagText = 'Aguardando saída';
                 }
 
                 return (
@@ -544,6 +567,17 @@ export function Caixa() {
                         ))}
                       </div>
                     )}
+                    
+                    {/* Botões de Simulação para Teste (só aparecem se atribuída) */}
+                    {activeTab === 'IN_TRANSIT' && (
+                      <div className="mt-4 flex gap-2 border-t pt-3">
+                        {!delivery.startedAt ? (
+                          <button onClick={() => handleSimularInicio(delivery.id, delivery.driver!.id)} className="text-xs bg-gray-200 px-3 py-1 rounded">Simular Início Rota</button>
+                        ) : (
+                          <button onClick={() => handleSimularFim(delivery.id)} className="text-xs bg-green-200 text-green-800 px-3 py-1 rounded">Simular Entrega</button>
+                        )}
+                      </div>
+                    )}
                   </div>
                 );
               })
@@ -552,21 +586,101 @@ export function Caixa() {
         </div>
       </main>
 
-      {/* MODAL DO CLIENTE MANTIDO IGUAL */}
+      {/* DATALIST INVISÍVEL COM OS BAIRROS DE REGISTRO */}
+      <datalist id="bairros-registro">
+        {BAIRROS_REGISTRO.map(bairro => <option key={bairro} value={bairro} />)}
+      </datalist>
+
       {showCustomerModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
-          {/* ... Seu código original do modal ... */}
-          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
             <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center">
               <h3 className="font-bold flex items-center gap-2"><MapPin size={18} /> Cadastrar Novo Cliente</h3>
               <button onClick={resetCustomerModal} className="text-blue-200 hover:text-white"><X size={20} /></button>
             </div>
-            <form onSubmit={handleCreateCustomer} className="p-5 space-y-4">
-              <input required autoFocus type="text" value={newCustomer.name} onChange={e => setNewCustomer({ ...newCustomer, name: e.target.value })} className="w-full border rounded-lg p-2.5 text-sm" placeholder="Nome do Cliente / Local *" />
-              <input required type="text" value={newCustomer.street} onChange={e => setNewCustomer({ ...newCustomer, street: e.target.value })} className="w-full border rounded-lg p-2.5 text-sm" placeholder="Rua / Logradouro *" />
-              <input required type="text" value={newCustomer.number} onChange={e => setNewCustomer({ ...newCustomer, number: e.target.value })} className="w-full border rounded-lg p-2.5 text-sm" placeholder="Número *" />
-              <input required type="text" value={rawNeighborhood} onChange={e => setRawNeighborhood(e.target.value)} className="w-full border rounded-lg p-2.5 text-sm" placeholder="Bairro *" />
-              <button type="submit" disabled={loadingCustomer} className="w-full bg-[#1A4B9F] text-white font-bold text-sm py-3 mt-2 rounded-lg">{loadingCustomer ? 'Salvando...' : 'Salvar e Selecionar'}</button>
+            
+            <form onSubmit={handleCreateCustomer} className="p-5 space-y-4 overflow-y-auto">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Nome do Cliente / Local *</label>
+                  <input required autoFocus type="text" value={newCustomer.name} onChange={e => setNewCustomer({ ...newCustomer, name: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: Dona Maria / Mercado Central" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Telefone / WhatsApp</label>
+                  <input type="text" value={newCustomer.phone} onChange={e => setNewCustomer({ ...newCustomer, phone: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="(13) 99999-9999" />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Cidade *</label>
+                  <select value={selectedCity} onChange={e => handleCityChange(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm">
+                    {CIDADES_VALE.map(city => <option key={city} value={city}>{city === 'Outra' ? 'Outra cidade...' : `${city} - SP`}</option>)}
+                  </select>
+                </div>
+                
+                {selectedCity === 'Outra' && (
+                  <div>
+                    <label className="block text-xs font-semibold text-gray-600 mb-1">Qual Cidade? *</label>
+                    <input required type="text" value={customCity} onChange={e => setCustomCity(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da cidade" />
+                  </div>
+                )}
+                
+                <div className={selectedCity === 'Outra' ? 'sm:col-span-2' : ''}>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Bairro *</label>
+                  {selectedCity === 'Registro' ? (
+                    <input 
+                      required 
+                      type="text" 
+                      list="bairros-registro" 
+                      value={rawNeighborhood} 
+                      onChange={e => setRawNeighborhood(e.target.value)} 
+                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" 
+                      placeholder="Escolha da lista ou digite..." 
+                    />
+                  ) : (
+                    <input 
+                      required 
+                      type="text" 
+                      value={rawNeighborhood} 
+                      onChange={e => setRawNeighborhood(e.target.value)} 
+                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" 
+                      placeholder={`Digite o bairro em ${activeCityName}`} 
+                    />
+                  )}
+                </div>
+              </div>
+
+              <div className="grid grid-cols-3 gap-4">
+                <div className="col-span-2 relative">
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Rua / Logradouro *</label>
+                  <input required type="text" value={newCustomer.street} onChange={e => { setNewCustomer({ ...newCustomer, street: e.target.value }); setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da rua..." />
+                  
+                  {showSuggestions && streetSuggestions.length > 0 && (
+                    <ul className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
+                      {streetSuggestions.map((item, idx) => (
+                        <li key={`${item.cep}-${idx}`} onMouseDown={() => handleSelectSuggestion(item)} className="cursor-pointer border-b border-gray-100 px-3 py-2 text-xs hover:bg-blue-50 last:border-none">
+                          <p className="font-semibold text-gray-800">{item.logradouro}</p>
+                          <p className="text-[11px] text-gray-500">{item.bairro ? `${item.bairro} • ` : ''}CEP: {item.cep}</p>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Número *</label>
+                  <input required type="text" value={newCustomer.number} onChange={e => setNewCustomer({ ...newCustomer, number: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: 123" />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Ponto de Referência (opcional)</label>
+                <input type="text" value={newCustomer.reference} onChange={e => setNewCustomer({ ...newCustomer, reference: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: Próximo à praça, portão azul..." />
+              </div>
+
+              <button type="submit" disabled={loadingCustomer} className="w-full bg-[#1A4B9F] text-white font-bold text-sm py-3 mt-2 rounded-lg shadow-sm hover:bg-blue-800 active:bg-blue-900 transition-colors disabled:opacity-50">
+                {loadingCustomer ? 'Salvando...' : 'Salvar e Selecionar'}
+              </button>
             </form>
           </div>
         </div>

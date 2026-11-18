@@ -47,7 +47,7 @@ export default defineConfig({
         name: 'PreçoBom Logística',
         short_name: 'PreçoBom',
         description: 'Sistema de controle de entregas do Mercado Preço Bom',
-        theme_color: '#1A4B9F',
+        theme_color: '#2E3192',
         background_color: '#F9FAFB',
         display: 'standalone', 
         icons: [
