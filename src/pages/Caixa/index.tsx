@@ -300,31 +300,6 @@ export function Caixa() {
     }
   };
 
-  const handleSimularInicio = async (deliveryId: string, driverId: string) => {
-    try {
-      await axios.put(`${API_URL}/deliveries/${deliveryId}/start`, {
-        driverId: driverId,
-        latitude: -24.6934,
-        longitude: -48.0033
-      });
-      fetchDeliveries();
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const handleSimularFim = async (deliveryId: string) => {
-    try {
-      await axios.put(`${API_URL}/deliveries/${deliveryId}/finish`, {
-        latitude: -24.6950,
-        longitude: -48.0010
-      });
-      fetchDeliveries();
-    } catch (error) {
-      console.error(error);
-    }
-  };
-
   const todayKey = new Date(now).toDateString();
   const visibleDeliveries = deliveries.filter(d => {
     if (new Date(d.createdAt).toDateString() !== todayKey) return false;
@@ -565,17 +540,6 @@ export function Caixa() {
                             Atribuir a {driver.name.split(' ')[0]}
                           </button>
                         ))}
-                      </div>
-                    )}
-                    
-                    {/* Botões de Simulação para Teste (só aparecem se atribuída) */}
-                    {activeTab === 'IN_TRANSIT' && (
-                      <div className="mt-4 flex gap-2 border-t pt-3">
-                        {!delivery.startedAt ? (
-                          <button onClick={() => handleSimularInicio(delivery.id, delivery.driver!.id)} className="text-xs bg-gray-200 px-3 py-1 rounded">Simular Início Rota</button>
-                        ) : (
-                          <button onClick={() => handleSimularFim(delivery.id)} className="text-xs bg-green-200 text-green-800 px-3 py-1 rounded">Simular Entrega</button>
-                        )}
                       </div>
                     )}
                   </div>
