@@ -1,36 +1,51 @@
+import axios from 'axios';
 import { Navigate, Outlet } from 'react-router-dom';
 
 interface ProtectedRouteProps {
   allowedRoles: string[];
 }
 
+const clearSession = () => {
+  localStorage.removeItem('@PrecoBom:user');
+  localStorage.removeItem('@PrecoBom:token');
+  sessionStorage.removeItem('@PrecoBom:user');
+  sessionStorage.removeItem('@PrecoBom:token');
+  delete axios.defaults.headers.common['Authorization'];
+};
+
 export function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
-  const userStr = localStorage.getItem('@PrecoBom:user');
-  
-  // Se não estiver logado, manda pro login
+  const userStr = localStorage.getItem('@PrecoBom:user') || sessionStorage.getItem('@PrecoBom:user');
+  const token = localStorage.getItem('@PrecoBom:token') || sessionStorage.getItem('@PrecoBom:token');
+
   if (!userStr) {
     return <Navigate to="/login" replace />;
   }
 
-  const user = JSON.parse(userStr);
-
-  // Se o Motorista tentar logar na Web, bloqueamos e mandamos baixar o app
-  if (user.role === 'DRIVER') {
-    alert("Acesso negado. Motoristas devem utilizar o aplicativo móvel.");
-    localStorage.removeItem('@PrecoBom:user');
+  let user: { role?: string };
+  try {
+    user = JSON.parse(userStr);
+  } catch {
+    clearSession();
     return <Navigate to="/login" replace />;
   }
 
-  // Se o usuário não tiver permissão para esta tela, redireciona para a tela correta dele
-  if (!allowedRoles.includes(user.role)) {
+  if (token) {
+    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
+  }
+
+  if (user.role === 'DRIVER') {
+    alert('Acesso negado. Motoristas devem utilizar o aplicativo móvel.');
+    clearSession();
+    return <Navigate to="/login" replace />;
+  }
+
+  if (!user.role || !allowedRoles.includes(user.role)) {
     if (user.role === 'ADMIN') return <Navigate to="/admin" replace />;
     if (user.role === 'CASHIER') return <Navigate to="/caixa" replace />;
 
-    // Role desconhecida: limpa a sessão e volta pro login (evita liberar a tela por engano)
-    localStorage.removeItem('@PrecoBom:user');
+    clearSession();
     return <Navigate to="/login" replace />;
   }
 
-  // Se passou em todas as validações, renderiza a página normalmente
   return <Outlet />;
 }

@@ -13,18 +13,16 @@ export default function App() {
         <Route path="/" element={<Navigate to="/login" replace />} />
 
         <Route element={<MainLayout />}>
-          
-          {/* Rotas exclusivas para o CAIXA */}
           <Route element={<ProtectedRoute allowedRoles={['CASHIER']} />}>
             <Route path="/caixa" element={<Caixa />} />
           </Route>
 
-          {/* Rotas exclusivas para o ADMIN */}
           <Route element={<ProtectedRoute allowedRoles={['ADMIN']} />}>
             <Route path="/admin" element={<Admin />} />
           </Route>
-
         </Route>
+
+        <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
   );

@@ -1,3 +1,4 @@
+import axios from 'axios';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ShoppingCart, ShieldAlert, LogOut } from 'lucide-react';
 import logoImg from '../../../assets/PBImagem.jpeg';
@@ -5,27 +6,29 @@ import logoImg from '../../../assets/PBImagem.jpeg';
 export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
-  
-  // Pega os dados do usuário logado
-  const userStr = localStorage.getItem('@PrecoBom:user');
+
+  const userStr = localStorage.getItem('@PrecoBom:user') || sessionStorage.getItem('@PrecoBom:user');
   const user = userStr ? JSON.parse(userStr) : null;
 
   const handleLogout = () => {
     localStorage.removeItem('@PrecoBom:user');
+    localStorage.removeItem('@PrecoBom:token');
+    sessionStorage.removeItem('@PrecoBom:user');
+    sessionStorage.removeItem('@PrecoBom:token');
+    delete axios.defaults.headers.common['Authorization'];
     navigate('/login');
   };
 
   return (
     <header className="bg-[#2E3192] text-white px-4 py-3 shadow-md z-10 w-full flex-shrink-0">
       <div className="flex justify-between items-center w-full max-w-7xl mx-auto">
-        
-        {/* Logo na parte da esquerda */}
         <div className="flex items-center gap-3">
           <div className="relative h-12 w-[52px] sm:h-14 sm:w-[62px] overflow-hidden flex-shrink-0 flex items-center justify-center">
-             <img 
-               src={logoImg} alt="Logo PreçoBom" 
-               className="absolute top-1/2 left-1/2 -translate-x-[48%] -translate-y-1/2 h-[120%] max-w-none object-contain"
-             />
+            <img
+              src={logoImg}
+              alt="Logo PreçoBom"
+              className="absolute top-1/2 left-1/2 -translate-x-[48%] -translate-y-1/2 h-[120%] max-w-none object-contain"
+            />
           </div>
           <div className="flex flex-col justify-center">
             <h1 className="text-base sm:text-lg font-bold tracking-tight leading-none text-white">
@@ -37,7 +40,6 @@ export function Header() {
           </div>
         </div>
 
-        {/* Meio */}
         <nav className="hidden md:flex items-center gap-6">
           {user?.role === 'CASHIER' && (
             <Link to="/caixa" className={`flex items-center gap-2 text-sm font-medium ${location.pathname === '/caixa' ? 'text-white' : 'text-blue-300 hover:text-white transition'}`}>
@@ -51,7 +53,6 @@ export function Header() {
           )}
         </nav>
 
-        {/* Parte da direta (quem ta logado e botao de sair) */}
         <div className="flex items-center gap-4">
           {user && (
             <div className="bg-white text-[#1A4B9F] px-3 py-1.5 rounded-full text-xs flex items-center gap-2 shadow-sm whitespace-nowrap">
@@ -65,7 +66,7 @@ export function Header() {
             </div>
           )}
 
-          <button 
+          <button
             onClick={handleLogout}
             className="text-blue-300 hover:text-white transition flex items-center gap-1 text-xs font-semibold"
             title="Sair do sistema"
@@ -74,7 +75,6 @@ export function Header() {
             <span className="hidden sm:inline">Sair</span>
           </button>
         </div>
-
       </div>
     </header>
   );
