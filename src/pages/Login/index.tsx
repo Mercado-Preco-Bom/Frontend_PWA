@@ -44,7 +44,7 @@ export function Login() {
     'w-full rounded-xl border border-gray-200 bg-white/80 px-4 py-4 text-base text-gray-800 placeholder-gray-400 outline-none transition focus:border-[#2B4FA8] focus:ring-2 focus:ring-[#2B4FA8]/20';
 
   return (
-    <div className="min-h-screen w-screen bg-gradient-to-b from-[#F3F4FA] via-[#F6EEF3] to-[#F9E9EE] flex items-center justify-center p-6">
+    <div className="min-h-screen w-screen bg-slate-50 flex items-center justify-center p-6">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-10">
           <div className="h-24 w-24 rounded-full overflow-hidden shadow-md ring-1 ring-black/5">
