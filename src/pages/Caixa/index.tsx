@@ -111,6 +111,7 @@ export function Caixa() {
   const [selectedCity, setSelectedCity] = useState('Registro');
   const [customCity, setCustomCity] = useState('');
   const [rawNeighborhood, setRawNeighborhood] = useState('Centro');
+  const [isManualNeighborhood, setIsManualNeighborhood] = useState(false);
   const [streetSuggestions, setStreetSuggestions] = useState<ViaCepResult[]>([]);
   const [showSuggestions, setShowSuggestions] = useState(false);
 
@@ -214,6 +215,7 @@ export function Caixa() {
   const handleCityChange = (city: string) => {
     setSelectedCity(city);
     setStreetSuggestions([]);
+    setIsManualNeighborhood(false);
     setRawNeighborhood(city === 'Registro' ? 'Centro' : '');
   };
 
@@ -224,8 +226,10 @@ export function Caixa() {
     if (item.bairro) {
       const matchedBairro = BAIRROS_REGISTRO.find(b => b.toLowerCase() === item.bairro.toLowerCase());
       if (selectedCity === 'Registro' && matchedBairro) {
+        setIsManualNeighborhood(false);
         setRawNeighborhood(matchedBairro);
       } else {
+        setIsManualNeighborhood(selectedCity === 'Registro');
         setRawNeighborhood(item.bairro);
       }
     }
@@ -233,7 +237,7 @@ export function Caixa() {
 
   const resetCustomerModal = () => {
     setNewCustomer({ name: '', phone: '', street: '', number: '', neighborhood: 'Centro', reference: '' });
-    setSelectedCity('Registro'); setCustomCity(''); setRawNeighborhood('Centro');
+    setSelectedCity('Registro'); setCustomCity(''); setRawNeighborhood('Centro'); setIsManualNeighborhood(false);
     setStreetSuggestions([]); setShowSuggestions(false); setShowCustomerModal(false);
   };
 
@@ -582,10 +586,6 @@ export function Caixa() {
         </div>
       </main>
 
-      <datalist id="bairros-registro">
-        {BAIRROS_REGISTRO.map(bairro => <option key={bairro} value={bairro} />)}
-      </datalist>
-
       {showCustomerModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
@@ -622,17 +622,30 @@ export function Caixa() {
                 )}
 
                 <div className={selectedCity === 'Outra' ? 'sm:col-span-2' : ''}>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Bairro *</label>
-                  {selectedCity === 'Registro' ? (
-                    <input
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="block text-xs font-semibold text-gray-600">Bairro *</label>
+                    {selectedCity === 'Registro' && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setRawNeighborhood(isManualNeighborhood ? 'Centro' : '');
+                          setIsManualNeighborhood(!isManualNeighborhood);
+                        }}
+                        className="text-[11px] font-semibold text-[#1A4B9F] hover:underline"
+                      >
+                        {isManualNeighborhood ? 'Escolher da lista' : 'Digitar outro bairro'}
+                      </button>
+                    )}
+                  </div>
+                  {selectedCity === 'Registro' && !isManualNeighborhood ? (
+                    <select
                       required
-                      type="text"
-                      list="bairros-registro"
                       value={rawNeighborhood}
                       onChange={e => setRawNeighborhood(e.target.value)}
-                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm"
-                      placeholder="Escolha da lista ou digite..."
-                    />
+                      className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm"
+                    >
+                      {BAIRROS_REGISTRO.map(bairro => <option key={bairro} value={bairro}>{bairro}</option>)}
+                    </select>
                   ) : (
                     <input
                       required

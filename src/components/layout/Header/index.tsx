@@ -1,4 +1,4 @@
-import axios from 'axios';
+import { getSession, clearSession } from '../../../utils/auth';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { ShoppingCart, ShieldAlert, LogOut } from 'lucide-react';
 import logoImg from '../../../assets/PBImagem.jpeg';
@@ -7,15 +7,10 @@ export function Header() {
   const location = useLocation();
   const navigate = useNavigate();
 
-  const userStr = localStorage.getItem('@PrecoBom:user') || sessionStorage.getItem('@PrecoBom:user');
-  const user = userStr ? JSON.parse(userStr) : null;
+  const user = getSession();
 
   const handleLogout = () => {
-    localStorage.removeItem('@PrecoBom:user');
-    localStorage.removeItem('@PrecoBom:token');
-    sessionStorage.removeItem('@PrecoBom:user');
-    sessionStorage.removeItem('@PrecoBom:token');
-    delete axios.defaults.headers.common['Authorization'];
+    clearSession();
     navigate('/login');
   };
 

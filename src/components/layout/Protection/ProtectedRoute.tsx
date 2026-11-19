@@ -1,36 +1,15 @@
-import axios from 'axios';
+import { getSession, clearSession } from '../../../utils/auth';
 import { Navigate, Outlet } from 'react-router-dom';
 
 interface ProtectedRouteProps {
   allowedRoles: string[];
 }
 
-const clearSession = () => {
-  localStorage.removeItem('@PrecoBom:user');
-  localStorage.removeItem('@PrecoBom:token');
-  sessionStorage.removeItem('@PrecoBom:user');
-  sessionStorage.removeItem('@PrecoBom:token');
-  delete axios.defaults.headers.common['Authorization'];
-};
-
 export function ProtectedRoute({ allowedRoles }: ProtectedRouteProps) {
-  const userStr = localStorage.getItem('@PrecoBom:user') || sessionStorage.getItem('@PrecoBom:user');
-  const token = localStorage.getItem('@PrecoBom:token') || sessionStorage.getItem('@PrecoBom:token');
+  const user = getSession();
 
-  if (!userStr) {
+  if (!user) {
     return <Navigate to="/login" replace />;
-  }
-
-  let user: { role?: string };
-  try {
-    user = JSON.parse(userStr);
-  } catch {
-    clearSession();
-    return <Navigate to="/login" replace />;
-  }
-
-  if (token) {
-    axios.defaults.headers.common['Authorization'] = `Bearer ${token}`;
   }
 
   if (user.role === 'DRIVER') {

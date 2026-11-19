@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { getRoleLabel } from '../../utils/auth';
 import axios from 'axios';
 import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
@@ -608,10 +609,10 @@ export function Admin() {
                           <td className="py-3">
                             <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
                               u.role === 'ADMIN' ? 'bg-purple-50 text-purple-700' :
-                              u.role === 'CAIXA' ? 'bg-blue-50 text-blue-700' :
+                              (u.role === 'CAIXA' || u.role === 'CASHIER') ? 'bg-blue-50 text-blue-700' :
                               'bg-orange-50 text-orange-700'
                             }`}>
-                              {u.role}
+                              {getRoleLabel(u.role)}
                             </span>
                           </td>
                           <td className="py-3 text-center">
