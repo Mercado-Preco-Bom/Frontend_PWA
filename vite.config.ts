@@ -11,12 +11,10 @@ export default defineConfig({
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'mask-icon.svg'],
       workbox: {
-        globPatterns: ['**/*.{js,css,html,ico,png,svg}'], // Garante o cache visual da interface
+        globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
         
-        // 👇 A INFORMAÇÃO QUE TINHA SIDO PERDIDA: Fila de sincronização offline
         runtimeCaching: [
           {
-            // Intercepta qualquer requisição POST para o seu backend no Render
             urlPattern: /^https:\/\/.*\.onrender\.com\/.*$/i, 
             handler: 'NetworkOnly',
             method: 'POST',
@@ -24,13 +22,12 @@ export default defineConfig({
               backgroundSync: {
                 name: 'precobom-sync-queue',
                 options: {
-                  maxRetentionTime: 24 * 60 // Tenta reenviar os dados por até 24 horas
+                  maxRetentionTime: 24 * 60 
                 }
               }
             }
           },
           {
-            // Intercepta qualquer requisição PUT (como atualizações de status da entrega)
             urlPattern: /^https:\/\/.*\.onrender\.com\/.*$/i, 
             handler: 'NetworkOnly',
             method: 'PUT',

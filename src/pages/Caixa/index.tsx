@@ -3,16 +3,16 @@ import axios from 'axios';
 import { Search, Package, Plus, Minus, Clock, UserPlus, X, MapPin, Truck, WifiOff, FileText } from 'lucide-react';
 
 const CIDADES_VALE = [
-  'Registro', 'Jacupiranga', 'Pariquera-Açu', 'Sete Barras', 'Juquiá', 
+  'Registro', 'Jacupiranga', 'Pariquera-Açu', 'Sete Barras', 'Juquiá',
   'Cajati', 'Eldorado', 'Miracatu', 'Iguape', 'Cananéia', 'Ilha Comprida', 'Outra'
 ];
 
 const BAIRROS_REGISTRO = [
-  'Agrocha', 'Alay Correa', 'Arapongal', 'Bloco B', 'Capinzal', 'Carapiranga', 
-  'Centro', 'Jardim América', 'Jardim Brasil', 'Jardim Caiçara', 'Jardim das Palmeiras', 
-  'Jardim Eiji Matsumura', 'Jardim Hatori', 'Jardim Paulistano', 'Jardim Planalto', 
-  'Jardim São Conrado', 'Jardim São Paulo', 'Nosso Teto', 'Pedreira', 'Serrote', 
-  'Vila Cabral', 'Vila Flórida', 'Vila Nova', 'Vila Ponce', 'Vila Ribeirópolis', 
+  'Agrocha', 'Alay Correa', 'Arapongal', 'Bloco B', 'Capinzal', 'Carapiranga',
+  'Centro', 'Jardim América', 'Jardim Brasil', 'Jardim Caiçara', 'Jardim das Palmeiras',
+  'Jardim Eiji Matsumura', 'Jardim Hatori', 'Jardim Paulistano', 'Jardim Planalto',
+  'Jardim São Conrado', 'Jardim São Paulo', 'Nosso Teto', 'Pedreira', 'Serrote',
+  'Vila Cabral', 'Vila Flórida', 'Vila Nova', 'Vila Ponce', 'Vila Ribeirópolis',
   'Vila Romão', 'Vila São Francisco', 'Vila Tupy', 'Votupoca'
 ];
 
@@ -39,6 +39,18 @@ interface Delivery {
 
 const SHOW_FINISHED_TAB = false;
 
+const isSameDay = (iso: string, nowMs: number) =>
+  new Date(iso).toDateString() === new Date(nowMs).toDateString();
+
+const formatShortDate = (iso: string) =>
+  new Date(iso).toLocaleDateString('pt-BR', { day: '2-digit', month: '2-digit' });
+
+const formatOrderTime = (iso: string, nowMs: number) => {
+  const time = new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
+  if (isSameDay(iso, nowMs)) return time;
+  return `${formatShortDate(iso)} · ${time}`;
+};
+
 const formatClock = (iso?: string | null) =>
   iso ? new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '-';
 
@@ -57,15 +69,13 @@ const formatDestination = (c: Customer) =>
 type DriverState = 'AVAILABLE' | 'ASSIGNED' | 'ON_ROUTE';
 
 interface DriverStop {
-  id: string; address: string; neighborhood: string; left: boolean;
+  id: string; address: string; neighborhood: string; left: boolean; createdAt: string;
 }
 
 interface DriverStatus {
   driver: User; state: DriverState; departedAt: string | null;
   freeSince: string | null; stops: DriverStop[]; onRouteCount: number; queuedCount: number;
 }
-
-const normalize = (t?: string | null) => (t ?? '').trim().toLowerCase();
 
 const summarizeStops = (stops: DriverStop[]) => {
   const counts = new Map<string, number>();
@@ -151,7 +161,7 @@ export function Caixa() {
     fetchCustomers();
     fetchDeliveries();
     fetchDrivers();
-    
+
     const interval = setInterval(fetchDeliveries, 5000);
     const clock = setInterval(() => setNow(Date.now()), 30000);
     const syncInterval = setInterval(syncOfflineDeliveries, 10000);
@@ -302,7 +312,8 @@ export function Caixa() {
 
   const todayKey = new Date(now).toDateString();
   const visibleDeliveries = deliveries.filter(d => {
-    if (new Date(d.createdAt).toDateString() !== todayKey) return false;
+    const isToday = new Date(d.createdAt).toDateString() === todayKey;
+    if (!isToday && d.status === 'DELIVERED') return false;
     if (!SHOW_FINISHED_TAB && d.status === 'DELIVERED') return false;
     return true;
   });
@@ -321,7 +332,13 @@ export function Caixa() {
         .sort((a, b) => new Date(b.finishedAt!).getTime() - new Date(a.finishedAt!).getTime())[0];
 
       const state: DriverState = onRoute.length > 0 ? 'ON_ROUTE' : queued.length > 0 ? 'ASSIGNED' : 'AVAILABLE';
-      const toStop = (d: Delivery, left: boolean): DriverStop => ({ id: d.id, address: formatDestination(d.customer), neighborhood: d.customer.neighborhood ?? '', left });
+      const toStop = (d: Delivery, left: boolean): DriverStop => ({
+        id: d.id,
+        address: formatDestination(d.customer),
+        neighborhood: d.customer.neighborhood ?? '',
+        left,
+        createdAt: d.createdAt,
+      });
 
       return {
         driver, state, departedAt: onRoute[0]?.startedAt ?? null,
@@ -427,7 +444,7 @@ export function Caixa() {
               <p className="text-xs text-gray-400 italic">Nenhum motorista cadastrado.</p>
             ) : (
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-64 overflow-y-auto pr-1 items-start">
-                {driverStatuses.map(({ driver, state, departedAt, freeSince, stops, onRouteCount, queuedCount }) => {
+                {driverStatuses.map(({ driver, state, departedAt, freeSince, stops, queuedCount }) => {
                   const badge = state === 'ON_ROUTE' ? { label: 'Em rota', cls: 'bg-[#1A4B9F] text-white' } : state === 'ASSIGNED' ? { label: queuedCount > 1 ? `${queuedCount} entregas` : 'Atribuída', cls: 'bg-[#FFF3E0] text-[#E65100] border border-[#FFE0B2]' } : { label: 'Disponível', cls: 'bg-green-50 text-green-700 border border-green-200' };
                   const expanded = expandedDrivers.has(driver.id);
 
@@ -465,7 +482,14 @@ export function Caixa() {
                                 {stops.map(stop => (
                                   <li key={stop.id} className="flex items-start gap-1.5 text-[11px] text-gray-600">
                                     <span className={`mt-1 w-1.5 h-1.5 rounded-full flex-shrink-0 ${stop.left ? 'bg-[#1A4B9F]' : 'bg-[#E65100]'}`} />
-                                    <span className="flex-1">{stop.address}</span>
+                                    <span className="flex-1">
+                                      {stop.address}
+                                      {!isSameDay(stop.createdAt, now) && (
+                                        <span className="ml-1.5 px-1.5 py-0.5 rounded bg-amber-100 text-amber-800 font-semibold text-[9px] whitespace-nowrap">
+                                          {formatShortDate(stop.createdAt)}
+                                        </span>
+                                      )}
+                                    </span>
                                     <span className="text-[10px] text-gray-400 whitespace-nowrap">{stop.left ? 'em rota' : 'não saiu'}</span>
                                   </li>
                                 ))}
@@ -498,6 +522,7 @@ export function Caixa() {
               <p className="text-center text-gray-400 text-sm mt-10">Nenhuma entrega nesta aba.</p>
             ) : (
               filteredDeliveries.map((delivery) => {
+                const isFromPreviousDay = !isSameDay(delivery.createdAt, now);
                 let tagColorClass = '';
                 let tagText = '';
                 if (delivery.status === 'DELIVERED') {
@@ -518,7 +543,9 @@ export function Caixa() {
                       </div>
                       <div className="text-right">
                         <p className="text-gray-400 text-[10px]"># {delivery.id.substring(0, 5)}</p>
-                        <p className="text-gray-800 font-bold text-xs flex items-center justify-end gap-1 mt-0.5"><Clock size={12} className="text-[#E53E3E]" /> {new Date(delivery.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</p>
+                        <p className="text-gray-800 font-bold text-xs flex items-center justify-end gap-1 mt-0.5">
+                          <Clock size={12} className="text-[#E53E3E]" /> {formatOrderTime(delivery.createdAt, now)}
+                        </p>
                       </div>
                     </div>
                     {delivery.description && (
@@ -531,6 +558,11 @@ export function Caixa() {
                       <span className="text-[#1A4B9F] font-medium bg-blue-50 px-2 py-1 rounded text-[10px]">{delivery.paymentMethod === 'CASH' ? 'Dinheiro' : delivery.paymentMethod === 'CREDIT_CARD' ? 'Cartão' : 'Pix'}</span>
                       {delivery.driver && <span className="text-white font-medium bg-[#E65100] px-2 py-1 rounded-full text-[10px]">Mot. {delivery.driver.name.split(' ')[0]}</span>}
                       {tagText && <span className={`font-medium px-2 py-1 rounded-full text-[10px] ${tagColorClass}`}>{tagText}</span>}
+                      {isFromPreviousDay && (
+                        <span className="font-semibold bg-amber-100 text-amber-800 border border-amber-200 px-2 py-1 rounded-full text-[10px]">
+                          Dia {formatShortDate(delivery.createdAt)}
+                        </span>
+                      )}
                     </div>
 
                     {activeTab === 'PENDING' && !delivery.driver && (
@@ -550,7 +582,6 @@ export function Caixa() {
         </div>
       </main>
 
-      {/* DATALIST INVISÍVEL COM OS BAIRROS DE REGISTRO */}
       <datalist id="bairros-registro">
         {BAIRROS_REGISTRO.map(bairro => <option key={bairro} value={bairro} />)}
       </datalist>
@@ -562,7 +593,7 @@ export function Caixa() {
               <h3 className="font-bold flex items-center gap-2"><MapPin size={18} /> Cadastrar Novo Cliente</h3>
               <button onClick={resetCustomerModal} className="text-blue-200 hover:text-white"><X size={20} /></button>
             </div>
-            
+
             <form onSubmit={handleCreateCustomer} className="p-5 space-y-4 overflow-y-auto">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
@@ -582,34 +613,34 @@ export function Caixa() {
                     {CIDADES_VALE.map(city => <option key={city} value={city}>{city === 'Outra' ? 'Outra cidade...' : `${city} - SP`}</option>)}
                   </select>
                 </div>
-                
+
                 {selectedCity === 'Outra' && (
                   <div>
                     <label className="block text-xs font-semibold text-gray-600 mb-1">Qual Cidade? *</label>
                     <input required type="text" value={customCity} onChange={e => setCustomCity(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da cidade" />
                   </div>
                 )}
-                
+
                 <div className={selectedCity === 'Outra' ? 'sm:col-span-2' : ''}>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Bairro *</label>
                   {selectedCity === 'Registro' ? (
-                    <input 
-                      required 
-                      type="text" 
-                      list="bairros-registro" 
-                      value={rawNeighborhood} 
-                      onChange={e => setRawNeighborhood(e.target.value)} 
-                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" 
-                      placeholder="Escolha da lista ou digite..." 
+                    <input
+                      required
+                      type="text"
+                      list="bairros-registro"
+                      value={rawNeighborhood}
+                      onChange={e => setRawNeighborhood(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm"
+                      placeholder="Escolha da lista ou digite..."
                     />
                   ) : (
-                    <input 
-                      required 
-                      type="text" 
-                      value={rawNeighborhood} 
-                      onChange={e => setRawNeighborhood(e.target.value)} 
-                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" 
-                      placeholder={`Digite o bairro em ${activeCityName}`} 
+                    <input
+                      required
+                      type="text"
+                      value={rawNeighborhood}
+                      onChange={e => setRawNeighborhood(e.target.value)}
+                      className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm"
+                      placeholder={`Digite o bairro em ${activeCityName}`}
                     />
                   )}
                 </div>
@@ -619,7 +650,7 @@ export function Caixa() {
                 <div className="col-span-2 relative">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Rua / Logradouro *</label>
                   <input required type="text" value={newCustomer.street} onChange={e => { setNewCustomer({ ...newCustomer, street: e.target.value }); setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da rua..." />
-                  
+
                   {showSuggestions && streetSuggestions.length > 0 && (
                     <ul className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
                       {streetSuggestions.map((item, idx) => (
