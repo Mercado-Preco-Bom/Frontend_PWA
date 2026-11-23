@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react';
-import { getRoleLabel } from '../../utils/auth';
 import axios from 'axios';
 import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
@@ -420,18 +419,25 @@ export function Admin() {
                       <div className="space-y-1">
                         {viagem.entregas.map((entrega: any, idx: number) => {
                           const isFromPreviousDay = !isSameDay(entrega.createdAt, now);
+                          const horaInicio = entrega.startedAt ? formatTimeWithDate(entrega.startedAt, now) : null;
+                          const horaFim = entrega.finishedAt ? formatTimeWithDate(entrega.finishedAt, now) : null;
+
                           let tagClass = 'bg-gray-50 text-gray-600 border border-gray-200';
                           let tagText = 'Aguardando início';
                           if (entrega.status === 'DELIVERED') {
                             tagClass = 'bg-green-50 text-green-700 border border-green-100';
-                            tagText = `Entregue às ${formatTimeWithDate(entrega.finishedAt, now)}`;
+                            tagText = `Entregue às ${horaFim}`;
                           } else if (entrega.status === 'IN_TRANSIT' && entrega.startedAt) {
                             tagClass = 'bg-blue-50 text-blue-700 border border-blue-100';
                             tagText = 'Em rota';
                           }
 
                           return (
-                            <div key={entrega.id} className="flex justify-between items-center text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer" onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}>
+                            <div
+                              key={entrega.id}
+                              className="flex flex-wrap justify-between items-center gap-2 text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer"
+                              onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}
+                            >
                               <div className="flex items-center gap-3">
                                 <span className="font-bold text-gray-300 w-4">{idx + 1}.</span>
                                 <div className="flex items-center flex-wrap gap-1.5">
@@ -444,7 +450,12 @@ export function Admin() {
                                   )}
                                 </div>
                               </div>
-                              <div className="flex items-center gap-3">
+                              <div className="flex items-center gap-2 flex-wrap">
+                                {horaInicio && (
+                                  <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-50 text-[#1A4B9F] border border-indigo-100">
+                                    Iniciada às {horaInicio}
+                                  </span>
+                                )}
                                 <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${tagClass}`}>
                                   {tagText}
                                 </span>
@@ -520,15 +531,22 @@ export function Admin() {
                       <td className="p-4 text-gray-500">{h.customer.neighborhood}</td>
                       <td className="p-4 text-gray-600">{h.driver?.name || '-'}</td>
                       <td className="p-4">
-                        {h.status === 'DELIVERED' ? (
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-green-50 text-green-700">Entregue às {formatTime(h.finishedAt)}</span>
-                        ) : h.status === 'IN_TRANSIT' && h.startedAt ? (
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700">Em rota</span>
-                        ) : h.status === 'IN_TRANSIT' ? (
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-50 text-orange-700">Aguardando saída</span>
-                        ) : (
-                          <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-gray-100 text-gray-600">Pendente</span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap">
+                          {h.startedAt && (
+                            <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-50 text-[#1A4B9F]">
+                              Iniciada às {formatTime(h.startedAt)}
+                            </span>
+                          )}
+                          {h.status === 'DELIVERED' ? (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-green-50 text-green-700">Entregue às {formatTime(h.finishedAt)}</span>
+                          ) : h.status === 'IN_TRANSIT' && h.startedAt ? (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700">Em rota</span>
+                          ) : h.status === 'IN_TRANSIT' ? (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-orange-50 text-orange-700">Aguardando saída</span>
+                          ) : (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-gray-100 text-gray-600">Pendente</span>
+                          )}
+                        </div>
                       </td>
                     </tr>
                   ))}
@@ -609,10 +627,10 @@ export function Admin() {
                           <td className="py-3">
                             <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${
                               u.role === 'ADMIN' ? 'bg-purple-50 text-purple-700' :
-                              (u.role === 'CAIXA' || u.role === 'CASHIER') ? 'bg-blue-50 text-blue-700' :
+                              u.role === 'CAIXA' ? 'bg-blue-50 text-blue-700' :
                               'bg-orange-50 text-orange-700'
                             }`}>
-                              {getRoleLabel(u.role)}
+                              {u.role}
                             </span>
                           </td>
                           <td className="py-3 text-center">
