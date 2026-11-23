@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import axios from 'axios';
-import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search } from 'lucide-react';
+import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search, MapPin } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
 
 export interface DashboardDelivery {
@@ -48,11 +48,18 @@ const formatDate = (isoString: string) => {
   return new Date(isoString).toLocaleDateString('pt-BR');
 };
 
-const calcMinutes = (start?: string | null, end?: string | null | number) => {
-  if (!start) return '-';
+const formatDuration = (minutes: number) => {
+  if (minutes < 60) return `${minutes} min`;
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return m === 0 ? `${h}h` : `${h}h ${m}min`;
+};
+
+const calcMinutesNumber = (start?: string | null, end?: string | null | number) => {
+  if (!start) return 0;
   const endTime = end ? (typeof end === 'number' ? end : new Date(end).getTime()) : Date.now();
   const diff = endTime - new Date(start).getTime();
-  return `${Math.max(0, Math.round(diff / 60000))} min`;
+  return Math.max(0, Math.round(diff / 60000));
 };
 
 const getAvatarColor = (name: string) => {
@@ -90,7 +97,7 @@ export function Admin() {
     }
     fetchDashboard();
     const interval = setInterval(fetchDashboard, 5000);
-    const clock = setInterval(() => setNow(Date.now()), 60000);
+    const clock = setInterval(() => setNow(Date.now()), 15000);
 
     const end = new Date();
     const start = new Date();
@@ -179,7 +186,7 @@ export function Admin() {
       const driverId = sorted[0].driverId!;
       const driverReturns = (returnsByDriver[driverId] || []).sort((a, b) => a - b);
 
-      const trips = [];
+      const trips: DashboardDelivery[][] = [];
       let currentTrip = [sorted[0]];
 
       for (let i = 1; i < sorted.length; i++) {
@@ -205,13 +212,36 @@ export function Admin() {
       tripsByDriver[driverName] = trips.map((tripDeliveries, index) => {
         const first = tripDeliveries[0];
         const last = tripDeliveries[tripDeliveries.length - 1];
+        const nextTrip = trips[index + 1];
+        const nextTripStart = nextTrip
+          ? new Date(nextTrip[0].startedAt || nextTrip[0].createdAt).getTime()
+          : Infinity;
 
-        const idleTime = first.assignedAt && first.startedAt
-          ? Math.max(0, Math.round((new Date(first.startedAt).getTime() - new Date(first.assignedAt).getTime()) / 60000))
-          : 0;
+        const firstStartMs = first.startedAt ? new Date(first.startedAt).getTime() : null;
+        const lastEndMs = last.finishedAt ? new Date(last.finishedAt).getTime() : null;
 
-        const endTime = last.finishedAt ? new Date(last.finishedAt).getTime() : now;
-        const streetTime = first.startedAt ? Math.max(0, Math.round((endTime - new Date(first.startedAt).getTime()) / 60000)) : 0;
+        // Procura o primeiro retorno à base após o início desta viagem e antes da próxima
+        const retornoBaseMs = firstStartMs
+          ? driverReturns.find(rt => rt > firstStartMs && rt <= nextTripStart) ?? null
+          : null;
+
+        const isLastTrip = index === trips.length - 1;
+        const aindaFora = Boolean(
+          firstStartMs &&
+          !retornoBaseMs &&
+          (!lastEndMs || (isLastTrip && (now - lastEndMs) / 60000 <= 90))
+        );
+
+        let tempoForaMercado = 0;
+        if (firstStartMs) {
+          if (retornoBaseMs) {
+            tempoForaMercado = Math.max(0, Math.round((retornoBaseMs - firstStartMs) / 60000));
+          } else if (aindaFora) {
+            tempoForaMercado = Math.max(0, Math.round((now - firstStartMs) / 60000));
+          } else if (lastEndMs) {
+            tempoForaMercado = Math.max(0, Math.round((lastEndMs - firstStartMs) / 60000));
+          }
+        }
 
         return {
           id: `viagem-${driverName}-${index}`,
@@ -219,9 +249,10 @@ export function Admin() {
           dataReferencia: first.createdAt,
           primeiraSaida: first.startedAt,
           ultimaConclusao: last.finishedAt,
+          retornoBase: retornoBaseMs ? new Date(retornoBaseMs).toISOString() : null,
+          aindaFora,
           qtdEntregas: tripDeliveries.length,
-          ociosidadeMercado: idleTime,
-          tempoTotalRua: streetTime,
+          tempoForaMercado,
           entregas: tripDeliveries
         };
       });
@@ -240,6 +271,12 @@ export function Admin() {
 
   const viagensAgrupadas = getTripsByDriver();
 
+  const todasViagens = Object.values(viagensAgrupadas).flat();
+  const viagensComTempo = todasViagens.filter(v => v.tempoForaMercado > 0);
+  const mediaTempoFora = viagensComTempo.length > 0
+    ? Math.round(viagensComTempo.reduce((acc, v) => acc + v.tempoForaMercado, 0) / viagensComTempo.length)
+    : 0;
+
   const filteredHistory = historyData.filter(h =>
     h.customer.name.toLowerCase().includes(historySearch.toLowerCase()) ||
     h.driver?.name.toLowerCase().includes(historySearch.toLowerCase()) ||
@@ -253,7 +290,7 @@ export function Admin() {
           <h2 className="text-xl sm:text-2xl font-bold text-[#1A4B9F]">Gestão de Entregas</h2>
           <p className="text-xs sm:text-sm text-gray-500 mt-1">Monitoramento em tempo real</p>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="flex items-center gap-3 flex-wrap">
           <button
             onClick={() => { setShowHistoryModal(true); fetchHistory(); }}
             className="flex items-center gap-2 bg-green-600 text-white px-4 py-1.5 rounded-full text-xs font-semibold shadow-sm hover:bg-green-700 transition-colors"
@@ -292,9 +329,9 @@ export function Admin() {
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-center">
           <Hourglass size={20} className="text-red-500 mb-2" />
           <span className="text-2xl font-bold text-gray-800 flex items-baseline gap-1">
-            {data.metrics.avgIdleTime} <span className="text-sm font-normal text-gray-500">min</span>
+            {mediaTempoFora} <span className="text-sm font-normal text-gray-500">min</span>
           </span>
-          <span className="text-[10px] sm:text-xs text-gray-400 font-medium mt-1">Ociosidade média</span>
+          <span className="text-[10px] sm:text-xs text-gray-400 font-medium mt-1">Tempo médio fora</span>
         </div>
         <div className="bg-white p-4 rounded-xl shadow-sm border border-gray-100 flex flex-col justify-center col-span-2 md:col-span-1">
           <Route size={20} className="text-purple-600 mb-2" />
@@ -307,6 +344,19 @@ export function Admin() {
 
       <div className="flex flex-col lg:flex-row gap-6">
         <div className="flex-1 bg-white rounded-xl shadow-sm border border-gray-100 relative z-0 overflow-hidden min-h-[420px]">
+          <button
+            type="button"
+            onClick={() => setSelectedDeliveryId(null)}
+            className={`absolute top-3 right-3 z-[400] flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-semibold shadow-md transition-colors ${
+              selectedDeliveryId
+                ? 'bg-[#1A4B9F] text-white hover:bg-blue-800'
+                : 'bg-white/95 text-gray-700 border border-gray-200 hover:bg-gray-50'
+            }`}
+          >
+            <MapPin size={14} />
+            {selectedDeliveryId ? 'Ver todas as localizações' : 'Todas as localizações'}
+          </button>
+
           <DeliveryMap drivers={data.drivers} deliveries={data.history} selectedDeliveryId={selectedDeliveryId} />
         </div>
 
@@ -336,7 +386,7 @@ export function Admin() {
                   <>
                     <div className="flex items-center gap-2 flex-wrap mb-2">
                       <div className="bg-[#1A4B9F] text-white text-[10px] font-semibold px-2 py-1 rounded w-fit">
-                        Tempo de rua: {calcMinutes(driver.currentDelivery.startedAt, now)}
+                        Fora do mercado há {formatDuration(calcMinutesNumber(driver.currentDelivery.startedAt, now))}
                       </div>
                       {!isSameDay(driver.currentDelivery.createdAt, now) && (
                         <span className="font-semibold bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full text-[10px]">
@@ -360,10 +410,19 @@ export function Admin() {
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 overflow-hidden flex flex-col">
-        <div className="flex items-center justify-between mb-5">
+        <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
             Relatório de Viagens e Entregas (Hoje e Em Aberto)
           </h3>
+          {selectedDeliveryId && (
+            <button
+              type="button"
+              onClick={() => setSelectedDeliveryId(null)}
+              className="flex items-center gap-1.5 text-xs font-semibold text-[#1A4B9F] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-colors"
+            >
+              <MapPin size={12} /> Ver todas as localizações no mapa
+            </button>
+          )}
         </div>
 
         {Object.keys(viagensAgrupadas).length === 0 ? (
@@ -395,19 +454,26 @@ export function Admin() {
                           <div className="text-sm font-semibold text-gray-800 mt-1 flex items-center gap-2">
                             {viagem.primeiraSaida ? formatTimeWithDate(viagem.primeiraSaida, now) : 'Aguardando saída'}
                             {viagem.primeiraSaida && <span className="text-gray-300">→</span>}
-                            {viagem.primeiraSaida && !viagem.ultimaConclusao && <span className="text-blue-600 animate-pulse">Na rua</span>}
-                            {viagem.ultimaConclusao && formatTimeWithDate(viagem.ultimaConclusao, now)}
+                            {viagem.retornoBase ? (
+                              <span className="text-green-700">Voltou às {formatTimeWithDate(viagem.retornoBase, now)}</span>
+                            ) : viagem.aindaFora ? (
+                              <span className="text-blue-600 animate-pulse">Fora do mercado</span>
+                            ) : viagem.ultimaConclusao ? (
+                              <span>{formatTimeWithDate(viagem.ultimaConclusao, now)}</span>
+                            ) : null}
                           </div>
                         </div>
 
                         <div className="flex gap-6">
                           <div className="text-center">
-                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Ociosidade (Loja)</div>
-                            <div className="text-sm font-bold text-[#E53E3E] bg-red-50 px-2 py-0.5 rounded text-center inline-block">{viagem.ociosidadeMercado} min</div>
-                          </div>
-                          <div className="text-center">
-                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Tempo na Rua</div>
-                            <div className="text-sm font-bold text-[#1A4B9F] bg-blue-50 px-2 py-0.5 rounded text-center inline-block">{viagem.tempoTotalRua > 0 ? `${viagem.tempoTotalRua} min` : '-'}</div>
+                            <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Tempo Fora do Mercado</div>
+                            <div className={`text-sm font-bold px-2.5 py-0.5 rounded text-center inline-block ${
+                              viagem.aindaFora
+                                ? 'text-[#E53E3E] bg-red-50 animate-pulse'
+                                : 'text-[#1A4B9F] bg-blue-50'
+                            }`}>
+                              {viagem.primeiraSaida ? formatDuration(viagem.tempoForaMercado) : '-'}
+                            </div>
                           </div>
                           <div className="text-center">
                             <div className="text-[10px] uppercase font-bold text-gray-400 mb-1">Entregas Feitas</div>
@@ -435,7 +501,9 @@ export function Admin() {
                           return (
                             <div
                               key={entrega.id}
-                              className="flex flex-wrap justify-between items-center gap-2 text-sm p-2 hover:bg-blue-50/50 rounded transition-colors group cursor-pointer"
+                              className={`flex flex-wrap justify-between items-center gap-2 text-sm p-2 rounded transition-colors group cursor-pointer ${
+                                selectedDeliveryId === entrega.id ? 'bg-blue-50 ring-1 ring-blue-200' : 'hover:bg-blue-50/50'
+                              }`}
                               onClick={() => setSelectedDeliveryId(selectedDeliveryId === entrega.id ? null : entrega.id)}
                             >
                               <div className="flex items-center gap-3">
