@@ -4,6 +4,7 @@ import { ProtectedRoute } from './components/layout/Protection/ProtectedRoute';
 import { Login } from './pages/Login';
 import { Caixa } from './pages/Caixa';
 import { Admin } from './pages/Admin';
+import { DeliveryDetail } from './pages/Admin/DeliveryDetail';
 
 export default function App() {
   return (
@@ -19,6 +20,7 @@ export default function App() {
 
           <Route element={<ProtectedRoute allowedRoles={['ADMIN']} />}>
             <Route path="/admin" element={<Admin />} />
+            <Route path="/admin/entrega/:id" element={<DeliveryDetail />} />
           </Route>
         </Route>
 

@@ -1,7 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import axios from 'axios';
-import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search, MapPin } from 'lucide-react';
+import { useLocation, useNavigate } from 'react-router-dom';
+import { Package, CheckCircle2, Clock, Hourglass, Route, Circle, Loader2, WifiOff, AlertTriangle, Users, UserPlus, X, Trash2, Shield, Calendar, Search, MapPin, ChevronRight } from 'lucide-react';
 import { DeliveryMap } from '../../components/ui/DeliveryMap';
+import { PaymentChips } from '../../components/ui/PaymentBadges';
+import { formatBRL } from '../../utils/money';
 
 export interface DashboardDelivery {
   id: string; status: string; createdAt: string; startedAt: string | null; finishedAt: string | null;
@@ -9,6 +12,12 @@ export interface DashboardDelivery {
   endLatitude: number | null; endLongitude: number | null; driverId: string | null;
   customer: { name: string; neighborhood: string; street?: string; number?: string };
   driver: { id: string; name: string } | null;
+  isPaid?: boolean; amount?: number | null; paymentMethod?: string; changeFor?: number | null;
+  boxCount?: number; description?: string | null;
+}
+
+export interface HistoryFilters {
+  startDate: string; endDate: string; driver: string; status: string; search: string;
 }
 
 export interface DashboardDriver {
@@ -67,14 +76,33 @@ const getAvatarColor = (name: string) => {
   return colors[name.charCodeAt(0) % colors.length];
 };
 
+const toInputDate = (date: Date) =>
+  `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+
+const defaultHistoryFilters = (): HistoryFilters => {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 7);
+  return { startDate: toInputDate(start), endDate: toInputDate(end), driver: 'ALL', status: 'ALL', search: '' };
+};
+
+interface AdminLocationState {
+  openHistory?: boolean;
+  filters?: HistoryFilters;
+}
+
 export function Admin() {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const restoredState = useRef(location.state as AdminLocationState | null);
+
   const [data, setData] = useState<DashboardData | null>(null);
   const [loading, setLoading] = useState(true);
   const [selectedDeliveryId, setSelectedDeliveryId] = useState<string | null>(null);
   const [now, setNow] = useState(Date.now());
 
   const [showUserModal, setShowUserModal] = useState(false);
-  const [showHistoryModal, setShowHistoryModal] = useState(false);
+  const [showHistoryModal, setShowHistoryModal] = useState(Boolean(restoredState.current?.openHistory));
 
   const [usersList, setUsersList] = useState<any[]>([]);
   const [newUser, setNewUser] = useState({ name: '', email: '', password: '', role: 'MOTORISTA' });
@@ -82,9 +110,11 @@ export function Admin() {
 
   const [historyData, setHistoryData] = useState<DashboardDelivery[]>([]);
   const [loadingHistory, setLoadingHistory] = useState(false);
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
-  const [historySearch, setHistorySearch] = useState('');
+  const [filters, setFilters] = useState<HistoryFilters>(
+    () => restoredState.current?.filters ?? defaultHistoryFilters()
+  );
+  const [unassigned, setUnassigned] = useState<DashboardDelivery[]>([]);
+  const [tripDriver, setTripDriver] = useState('ALL');
 
   const API_URL = import.meta.env.VITE_API_URL;
 
@@ -99,13 +129,24 @@ export function Admin() {
     const interval = setInterval(fetchDashboard, 5000);
     const clock = setInterval(() => setNow(Date.now()), 15000);
 
-    const end = new Date();
-    const start = new Date();
-    start.setDate(end.getDate() - 7);
-    setEndDate(end.toISOString().split('T')[0]);
-    setStartDate(start.toISOString().split('T')[0]);
-
     return () => { clearInterval(interval); clearInterval(clock); };
+  }, [API_URL]);
+
+  useEffect(() => {
+    async function fetchUnassigned() {
+      try {
+        const response = await axios.get(`${API_URL}/deliveries`);
+        const list: DashboardDelivery[] = Array.isArray(response.data) ? response.data : [];
+        setUnassigned(
+          list
+            .filter(d => !d.driver && d.status !== 'DELIVERED')
+            .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
+        );
+      } catch {}
+    }
+    fetchUnassigned();
+    const interval = setInterval(fetchUnassigned, 5000);
+    return () => clearInterval(interval);
   }, [API_URL]);
 
   const fetchUsers = async () => {
@@ -142,20 +183,38 @@ export function Admin() {
     }
   };
 
-  const fetchHistory = async (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
+  const loadHistory = useCallback(async (source: HistoryFilters) => {
     setLoadingHistory(true);
     try {
       const response = await axios.get(`${API_URL}/admin/history`, {
-        params: { startDate, endDate }
+        params: { startDate: source.startDate, endDate: source.endDate, status: 'ALL' }
       });
       setHistoryData(response.data);
-    } catch (error) {
+    } catch {
       alert('Erro ao buscar histórico.');
     } finally {
       setLoadingHistory(false);
     }
+  }, [API_URL]);
+
+  const fetchHistory = (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    return loadHistory(filters);
   };
+
+  useEffect(() => {
+    const restored = restoredState.current;
+    if (!restored?.openHistory) return;
+    restoredState.current = null;
+    loadHistory(restored.filters ?? defaultHistoryFilters());
+    navigate(location.pathname, { replace: true, state: null });
+  }, [loadHistory, navigate, location.pathname]);
+
+  const updateFilter = <K extends keyof HistoryFilters>(key: K, value: HistoryFilters[K]) =>
+    setFilters(prev => ({ ...prev, [key]: value }));
+
+  const goToDetails = (deliveryId: string, fromHistory = false) =>
+    navigate(`/admin/entrega/${deliveryId}`, fromHistory ? { state: { from: 'history', filters } } : undefined);
 
   const getTripsByDriver = () => {
     if (!data) return {};
@@ -172,6 +231,7 @@ export function Admin() {
 
     data.history.forEach(d => {
       if (!d.driver) return;
+      if (tripDriver !== 'ALL' && d.driver.id !== tripDriver) return;
       if (!deliveriesByDriver[d.driver.name]) deliveriesByDriver[d.driver.name] = [];
       deliveriesByDriver[d.driver.name].push(d);
     });
@@ -277,11 +337,27 @@ export function Admin() {
     ? Math.round(viagensComTempo.reduce((acc, v) => acc + v.tempoForaMercado, 0) / viagensComTempo.length)
     : 0;
 
-  const filteredHistory = historyData.filter(h =>
-    h.customer.name.toLowerCase().includes(historySearch.toLowerCase()) ||
-    h.driver?.name.toLowerCase().includes(historySearch.toLowerCase()) ||
-    h.customer.neighborhood?.toLowerCase().includes(historySearch.toLowerCase())
-  );
+  const searchTerm = filters.search.toLowerCase();
+  const filteredHistory = historyData.filter(h => {
+    const matchesSearch =
+      h.customer.name.toLowerCase().includes(searchTerm) ||
+      h.driver?.name.toLowerCase().includes(searchTerm) ||
+      h.customer.neighborhood?.toLowerCase().includes(searchTerm);
+    const matchesDriver =
+      filters.driver === 'ALL' ||
+      (filters.driver === 'NONE' ? !h.driver : h.driver?.id === filters.driver);
+    const matchesStatus = filters.status === 'ALL' || h.status === filters.status;
+    return matchesSearch && matchesDriver && matchesStatus;
+  });
+
+  const historyDriverNames: Record<string, string> = {};
+  historyData.forEach(h => {
+    if (h.driver) historyDriverNames[h.driver.id] = h.driver.name;
+  });
+  const historyDrivers = Object.entries(historyDriverNames).sort((a, b) => a[1].localeCompare(b[1]));
+
+  const totalPaid = filteredHistory.filter(h => h.isPaid).reduce((sum, h) => sum + (h.amount ?? 0), 0);
+  const totalToCollect = filteredHistory.filter(h => !h.isPaid).reduce((sum, h) => sum + (h.amount ?? 0), 0);
 
   return (
     <div className="flex flex-col gap-6 h-full pb-8">
@@ -409,20 +485,70 @@ export function Admin() {
         </div>
       </div>
 
+      <div className={`rounded-xl shadow-sm border p-5 ${unassigned.length > 0 ? 'bg-amber-50 border-amber-200' : 'bg-white border-gray-100'}`}>
+        <div className="flex items-center gap-2 mb-4">
+          <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">Entregas sem motorista</h3>
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${unassigned.length > 0 ? 'bg-[#E65100] text-white' : 'bg-gray-100 text-gray-500'}`}>
+            {unassigned.length}
+          </span>
+        </div>
+
+        {unassigned.length === 0 ? (
+          <p className="text-sm text-gray-400">Todas as entregas abertas já têm motorista.</p>
+        ) : (
+          <div className="space-y-2">
+            {unassigned.map(d => (
+              <button
+                key={d.id}
+                type="button"
+                onClick={() => goToDetails(d.id)}
+                className="w-full text-left flex flex-wrap items-center justify-between gap-2 p-3 rounded-lg bg-white border border-amber-200 hover:border-[#E65100] transition-colors"
+              >
+                <div>
+                  <p className="font-semibold text-gray-800 capitalize text-sm">{d.customer.name}</p>
+                  <p className="text-xs text-gray-500">
+                    {[d.customer.neighborhood, [d.customer.street, d.customer.number].filter(Boolean).join(', ')].filter(Boolean).join(' — ')}
+                  </p>
+                  <p className="text-[11px] text-gray-500 mt-0.5">
+                    Registrada {formatTimeWithDate(d.createdAt, now)} · aguardando há {formatDuration(calcMinutesNumber(d.createdAt, now))}
+                  </p>
+                </div>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <PaymentChips delivery={d} />
+                  <ChevronRight size={16} className="text-gray-400" />
+                </div>
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
       <div className="bg-white rounded-xl shadow-sm border border-gray-100 p-5 overflow-hidden flex flex-col">
         <div className="flex items-center justify-between mb-5 flex-wrap gap-2">
           <h3 className="text-xs font-bold text-gray-500 uppercase tracking-wider">
             Relatório de Viagens e Entregas (Hoje e Em Aberto)
           </h3>
-          {selectedDeliveryId && (
-            <button
-              type="button"
-              onClick={() => setSelectedDeliveryId(null)}
-              className="flex items-center gap-1.5 text-xs font-semibold text-[#1A4B9F] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-colors"
+          <div className="flex items-center gap-2 flex-wrap">
+            <select
+              value={tripDriver}
+              onChange={e => setTripDriver(e.target.value)}
+              className="border border-gray-300 rounded-lg px-2 py-1 text-xs bg-white outline-none focus:border-[#1A4B9F]"
             >
-              <MapPin size={12} /> Ver todas as localizações no mapa
-            </button>
-          )}
+              <option value="ALL">Todos os motoristas</option>
+              {data.drivers.map(driver => (
+                <option key={driver.id} value={driver.id}>{driver.name}</option>
+              ))}
+            </select>
+            {selectedDeliveryId && (
+              <button
+                type="button"
+                onClick={() => setSelectedDeliveryId(null)}
+                className="flex items-center gap-1.5 text-xs font-semibold text-[#1A4B9F] bg-blue-50 hover:bg-blue-100 px-3 py-1 rounded-full transition-colors"
+              >
+                <MapPin size={12} /> Ver todas as localizações no mapa
+              </button>
+            )}
+          </div>
         </div>
 
         {Object.keys(viagensAgrupadas).length === 0 ? (
@@ -519,6 +645,12 @@ export function Admin() {
                                 </div>
                               </div>
                               <div className="flex items-center gap-2 flex-wrap">
+                                <PaymentChips delivery={entrega} />
+                                {entrega.assignedAt && (
+                                  <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-amber-50 text-amber-800 border border-amber-100">
+                                    Atribuída às {formatTime(entrega.assignedAt)}
+                                  </span>
+                                )}
                                 {horaInicio && (
                                   <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-50 text-[#1A4B9F] border border-indigo-100">
                                     Iniciada às {horaInicio}
@@ -527,6 +659,13 @@ export function Admin() {
                                 <span className={`text-[10px] font-bold px-2 py-1 rounded-md ${tagClass}`}>
                                   {tagText}
                                 </span>
+                                <button
+                                  type="button"
+                                  onClick={(ev) => { ev.stopPropagation(); goToDetails(entrega.id); }}
+                                  className="text-[10px] font-bold px-2 py-1 rounded-md text-[#1A4B9F] bg-white border border-blue-200 hover:bg-blue-50 transition-colors"
+                                >
+                                  Detalhes ›
+                                </button>
                               </div>
                             </div>
                           );
@@ -554,24 +693,46 @@ export function Admin() {
               <form onSubmit={fetchHistory} className="flex flex-col sm:flex-row gap-3 items-end">
                 <div className="flex-1 w-full">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Data Inicial</label>
-                  <input type="date" value={startDate} onChange={e => setStartDate(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
+                  <input type="date" value={filters.startDate} onChange={e => updateFilter('startDate', e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
                 </div>
                 <div className="flex-1 w-full">
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Data Final</label>
-                  <input type="date" value={endDate} onChange={e => setEndDate(e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
+                  <input type="date" value={filters.endDate} onChange={e => updateFilter('endDate', e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm outline-none focus:border-[#1A4B9F]" />
                 </div>
                 <button type="submit" disabled={loadingHistory} className="bg-[#1A4B9F] text-white px-6 py-2 rounded-lg text-sm font-bold shadow hover:bg-blue-800 disabled:opacity-50 h-[38px] w-full sm:w-auto">
                   {loadingHistory ? 'Buscando...' : 'Filtrar'}
                 </button>
               </form>
 
-              <div className="mt-4 relative">
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Motorista</label>
+                  <select value={filters.driver} onChange={e => updateFilter('driver', e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-[#1A4B9F]">
+                    <option value="ALL">Todos</option>
+                    <option value="NONE">Sem motorista</option>
+                    {historyDrivers.map(([driverId, driverName]) => (
+                      <option key={driverId} value={driverId}>{driverName}</option>
+                    ))}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Situação</label>
+                  <select value={filters.status} onChange={e => updateFilter('status', e.target.value)} className="w-full border border-gray-300 rounded-lg p-2 text-sm bg-white outline-none focus:border-[#1A4B9F]">
+                    <option value="ALL">Todas</option>
+                    <option value="PENDING">Pendentes</option>
+                    <option value="IN_TRANSIT">Em andamento</option>
+                    <option value="DELIVERED">Entregues</option>
+                  </select>
+                </div>
+              </div>
+
+              <div className="mt-3 relative">
                 <Search size={16} className="absolute left-3 top-2.5 text-gray-400" />
                 <input
                   type="text"
                   placeholder="Buscar por cliente, motorista ou bairro nos resultados abaixo..."
-                  value={historySearch}
-                  onChange={e => setHistorySearch(e.target.value)}
+                  value={filters.search}
+                  onChange={e => updateFilter('search', e.target.value)}
                   className="w-full border border-gray-300 rounded-lg p-2 pl-9 text-sm outline-none focus:border-[#1A4B9F]"
                 />
               </div>
@@ -585,21 +746,29 @@ export function Admin() {
                     <th className="p-4 font-medium">Cliente</th>
                     <th className="p-4 font-medium">Local</th>
                     <th className="p-4 font-medium">Motorista</th>
+                    <th className="p-4 font-medium">Pagamento</th>
                     <th className="p-4 font-medium">Status</th>
+                    <th className="p-4 font-medium"></th>
                   </tr>
                 </thead>
                 <tbody className="text-gray-700">
                   {filteredHistory.length === 0 && (
-                    <tr><td colSpan={5} className="p-8 text-center text-gray-400 text-sm">Nenhuma entrega encontrada para este período.</td></tr>
+                    <tr><td colSpan={7} className="p-8 text-center text-gray-400 text-sm">Nenhuma entrega encontrada para este período.</td></tr>
                   )}
                   {filteredHistory.map((h) => (
-                    <tr key={h.id} className="border-b border-gray-50 hover:bg-gray-50 transition-colors">
+                    <tr key={h.id} onClick={() => goToDetails(h.id, true)} className="border-b border-gray-50 hover:bg-gray-50 transition-colors cursor-pointer">
                       <td className="p-4 font-medium text-gray-600">{formatDate(h.createdAt)} <span className="text-[10px] ml-1">{formatTime(h.createdAt)}</span></td>
                       <td className="p-4 font-semibold text-gray-800 capitalize">{h.customer.name}</td>
                       <td className="p-4 text-gray-500">{h.customer.neighborhood}</td>
                       <td className="p-4 text-gray-600">{h.driver?.name || '-'}</td>
+                      <td className="p-4"><PaymentChips delivery={h} /></td>
                       <td className="p-4">
                         <div className="flex items-center gap-1.5 flex-wrap">
+                          {h.assignedAt && (
+                            <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-amber-50 text-amber-800">
+                              Atribuída às {formatTime(h.assignedAt)}
+                            </span>
+                          )}
                           {h.startedAt && (
                             <span className="text-[10px] font-semibold px-2 py-1 rounded-md bg-indigo-50 text-[#1A4B9F]">
                               Iniciada às {formatTime(h.startedAt)}
@@ -616,6 +785,7 @@ export function Admin() {
                           )}
                         </div>
                       </td>
+                      <td className="p-4 text-gray-300"><ChevronRight size={16} /></td>
                     </tr>
                   ))}
                 </tbody>
@@ -624,6 +794,11 @@ export function Admin() {
 
             <div className="bg-white border-t border-gray-100 p-3 shrink-0 flex justify-between items-center text-xs text-gray-500 font-semibold">
               <span>Mostrando {filteredHistory.length} entregas</span>
+              <span className="flex items-center gap-4 flex-wrap justify-end">
+                <span className="text-green-700">Já pagas: {formatBRL(totalPaid)}</span>
+                <span className="text-[#E65100]">A cobrar: {formatBRL(totalToCollect)}</span>
+                <span className="text-gray-800">Total: {formatBRL(totalPaid + totalToCollect)}</span>
+              </span>
             </div>
           </div>
         </div>

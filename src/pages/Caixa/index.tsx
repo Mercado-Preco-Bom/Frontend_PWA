@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { Search, Package, Plus, Minus, Clock, UserPlus, X, MapPin, Truck, WifiOff, FileText } from 'lucide-react';
+import { Search, Package, Plus, Minus, Clock, UserPlus, X, MapPin, Truck, WifiOff, FileText, CheckCircle2, Banknote } from 'lucide-react';
+import { PaymentChips } from '../../components/ui/PaymentBadges';
+import { formatBRL, parseMoney } from '../../utils/money';
 
 const CIDADES_VALE = [
   'Registro', 'Jacupiranga', 'Pariquera-Açu', 'Sete Barras', 'Juquiá',
@@ -32,6 +34,7 @@ interface User {
 
 interface Delivery {
   id: string; boxCount: number; paymentMethod: string; changeFor: number | null;
+  isPaid: boolean; amount: number | null;
   description: string | null; status: string; createdAt: string;
   startedAt: string | null; finishedAt: string | null;
   customer: Customer; driver: User | null;
@@ -93,6 +96,9 @@ export function Caixa() {
   const [volume, setVolume] = useState(1);
   const [payment, setPayment] = useState('Dinheiro');
   const [changeFor, setChangeFor] = useState('');
+  const [isPaid, setIsPaid] = useState(false);
+  const [amount, setAmount] = useState('');
+  const [amountTouched, setAmountTouched] = useState(false);
   const [description, setDescription] = useState('');
 
   const [deliveries, setDeliveries] = useState<Delivery[]>([]);
@@ -259,10 +265,40 @@ export function Caixa() {
 
   const resetForm = () => {
     setVolume(1); setPayment('Dinheiro'); setChangeFor(''); setDescription(''); setSelectedCustomerId('');
+    setIsPaid(false); setAmount(''); setAmountTouched(false);
+  };
+
+  const parsedAmount = parseMoney(amount);
+  const parsedChange = parseMoney(changeFor);
+  const amountMissing = !isPaid && (parsedAmount === null || parsedAmount <= 0);
+  const showAmountError = amountMissing && amountTouched;
+  const showChangeField = !isPaid && payment === 'Dinheiro';
+
+  const handleSelectPaid = (paid: boolean) => {
+    setIsPaid(paid);
+    if (paid) setChangeFor('');
   };
 
   const handleRegistrarPedido = async () => {
     if (!selectedCustomerId) return alert('Por favor, selecione um cliente!');
+
+    if (!isPaid && amountMissing) {
+      setAmountTouched(true);
+      return alert('Informe o valor a cobrar do cliente. O motorista precisa saber quanto cobrar, inclusive no Pix.');
+    }
+
+    if (isPaid && amount.trim() !== '' && parsedAmount === null) {
+      setAmountTouched(true);
+      return alert('O valor informado é inválido.');
+    }
+
+    if (showChangeField && changeFor.trim() !== '') {
+      if (parsedChange === null) return alert('O valor do troco é inválido.');
+      if (parsedAmount !== null && parsedChange < parsedAmount) {
+        return alert('O troco deve ser maior ou igual ao valor a cobrar.');
+      }
+    }
+
     setLoading(true);
 
     const methodMap: Record<string, string> = { Dinheiro: 'CASH', Cartão: 'CREDIT_CARD', Pix: 'PIX' };
@@ -270,7 +306,9 @@ export function Caixa() {
       customerId: selectedCustomerId,
       boxCount: volume,
       paymentMethod: methodMap[payment],
-      changeFor: payment === 'Dinheiro' && changeFor ? Number(changeFor) : null,
+      isPaid,
+      amount: parsedAmount,
+      changeFor: showChangeField && parsedChange !== null ? parsedChange : null,
       description: description.trim() || null,
     };
 
@@ -302,6 +340,8 @@ export function Caixa() {
         boxCount: currentDelivery.boxCount,
         paymentMethod: currentDelivery.paymentMethod,
         changeFor: currentDelivery.changeFor,
+        isPaid: Boolean(currentDelivery.isPaid),
+        amount: currentDelivery.amount ?? null,
         description: currentDelivery.description,
         status: 'IN_TRANSIT',
         customerId: currentDelivery.customer.id,
@@ -403,10 +443,59 @@ export function Caixa() {
 
           <div className="mb-5">
             <label className="block text-[11px] font-semibold text-gray-500 mb-2 uppercase tracking-wide">3. PAGAMENTO</label>
+
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => handleSelectPaid(true)}
+                className={`flex flex-col items-center text-center gap-1 p-3 border-2 rounded-lg transition-all ${isPaid ? 'bg-green-50 border-green-500 text-green-800' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'}`}
+              >
+                <CheckCircle2 size={22} className={isPaid ? 'text-green-600' : 'text-gray-400'} />
+                <span className="text-xs font-extrabold">JÁ FOI PAGO</span>
+                <span className="text-[10px] leading-tight">Motorista não cobra nada do cliente</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => handleSelectPaid(false)}
+                className={`flex flex-col items-center text-center gap-1 p-3 border-2 rounded-lg transition-all ${!isPaid ? 'bg-[#FFF3E0] border-[#E65100] text-[#9A3412]' : 'bg-white border-gray-300 text-gray-500 hover:bg-gray-50'}`}
+              >
+                <Banknote size={22} className={!isPaid ? 'text-[#E65100]' : 'text-gray-400'} />
+                <span className="text-xs font-extrabold">RECEBER NA ENTREGA</span>
+                <span className="text-[10px] leading-tight">Motorista cobra no destino</span>
+              </button>
+            </div>
+
+            <div className="mt-4">
+              <label className={`block text-xs font-bold mb-1.5 ${isPaid ? 'text-green-700' : showAmountError ? 'text-[#E53E3E]' : 'text-[#E65100]'}`}>
+                {isPaid ? 'Valor da entrega (R$) — já pago' : 'Valor a cobrar do cliente (R$) *'}
+              </label>
+              <div className={`flex items-center border-2 rounded-lg overflow-hidden ${isPaid ? 'border-green-300 bg-green-50/50' : showAmountError ? 'border-[#E53E3E] bg-red-50' : 'border-[#E65100] bg-[#FFF3E0]/60'}`}>
+                <span className="pl-3 text-sm font-semibold text-gray-600">R$</span>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={amount}
+                  onChange={(e) => setAmount(e.target.value)}
+                  onBlur={() => setAmountTouched(true)}
+                  className="flex-1 min-w-0 p-3 text-right outline-none bg-transparent text-base text-gray-800 font-bold"
+                />
+              </div>
+              {showAmountError && (
+                <p className="mt-1.5 text-[11px] font-semibold text-[#E53E3E]">
+                  Obrigatório: o motorista precisa saber quanto cobrar, inclusive no Pix.
+                </p>
+              )}
+            </div>
+
+            <label className="block text-[11px] font-semibold text-gray-500 mt-4 mb-2 uppercase tracking-wide">
+              {isPaid ? 'Forma usada no pagamento' : 'Forma de cobrança na entrega'}
+            </label>
             <div className="flex gap-2">
               {['Dinheiro', 'Cartão', 'Pix'].map((method) => (
                 <button
                   key={method}
+                  type="button"
                   onClick={() => { setPayment(method); if (method !== 'Dinheiro') setChangeFor(''); }}
                   className={`flex-1 py-3 border rounded-lg text-xs font-semibold transition-all ${payment === method ? 'bg-[#1A4B9F] border-[#1A4B9F] text-white' : 'bg-white border-gray-300 text-gray-600 hover:bg-gray-50'}`}
                 >
@@ -414,12 +503,26 @@ export function Caixa() {
                 </button>
               ))}
             </div>
-            {payment === 'Dinheiro' && (
+
+            {showChangeField && (
               <div className="mt-4 flex items-center justify-between border border-gray-300 rounded-lg overflow-hidden">
                 <span className="pl-3 text-sm font-medium text-gray-600">Troco para R$</span>
-                <input type="number" placeholder="0,00" value={changeFor} onChange={(e) => setChangeFor(e.target.value)} className="p-3 text-right outline-none text-sm text-gray-800 font-semibold w-1/2" />
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  placeholder="0,00"
+                  value={changeFor}
+                  onChange={(e) => setChangeFor(e.target.value)}
+                  className="p-3 text-right outline-none text-sm text-gray-800 font-semibold w-1/2"
+                />
               </div>
             )}
+
+            <div className={`mt-4 rounded-lg px-3 py-2.5 text-xs font-bold ${isPaid ? 'bg-green-50 text-green-800 border border-green-200' : 'bg-[#FFF3E0] text-[#9A3412] border border-[#FFE0B2]'}`}>
+              {isPaid
+                ? `PAGO${parsedAmount !== null ? ` — ${formatBRL(parsedAmount)}` : ''} · ${payment} · motorista NÃO cobra`
+                : `Motorista COBRA ${parsedAmount !== null && parsedAmount > 0 ? formatBRL(parsedAmount) : '(informe o valor)'} no ${payment}`}
+            </div>
           </div>
 
           <div className="mb-6">
@@ -559,7 +662,7 @@ export function Caixa() {
                     )}
                     <div className="flex items-center gap-2 mt-3 flex-wrap">
                       <span className="text-[#1A4B9F] font-medium bg-blue-50 px-2 py-1 rounded text-[10px] flex items-center gap-1"><Package size={12} /> {delivery.boxCount} vol.</span>
-                      <span className="text-[#1A4B9F] font-medium bg-blue-50 px-2 py-1 rounded text-[10px]">{delivery.paymentMethod === 'CASH' ? 'Dinheiro' : delivery.paymentMethod === 'CREDIT_CARD' ? 'Cartão' : 'Pix'}</span>
+                      <PaymentChips delivery={delivery} />
                       {delivery.driver && <span className="text-white font-medium bg-[#E65100] px-2 py-1 rounded-full text-[10px]">Mot. {delivery.driver.name.split(' ')[0]}</span>}
                       {tagText && <span className={`font-medium px-2 py-1 rounded-full text-[10px] ${tagColorClass}`}>{tagText}</span>}
                       {isFromPreviousDay && (
