@@ -14,6 +14,17 @@ export interface DashboardDelivery {
   driver: { id: string; name: string } | null;
   isPaid?: boolean; amount?: number | null; paymentMethod?: string; changeFor?: number | null;
   boxCount?: number; description?: string | null;
+  tripId?: string | null; cancelReason?: string | null;
+}
+
+export interface DashboardTrip {
+  id: string; driverId: string; leftAt: string; returnedAt: string | null; estimated: boolean;
+}
+
+export interface TripView {
+  id: string; numero: number; dataReferencia: string; primeiraSaida: string | null;
+  retornoBase: string | null; aindaFora: boolean; qtdEntregas: number; tempoForaMercado: number;
+  estimado: boolean; aguardandoSaida: boolean; entregas: DashboardDelivery[];
 }
 
 export interface HistoryFilters {
@@ -21,16 +32,16 @@ export interface HistoryFilters {
 }
 
 export interface DashboardDriver {
-  id: string; name: string; status: 'EM_ROTA' | 'DISPONIVEL'; connectionStatus: 'ONLINE' | 'SINAL_PERDIDO' | 'DESCONECTADO';
+  id: string; name: string; status: 'EM_ROTA' | 'VOLTANDO' | 'NO_MERCADO' | 'INDEFINIDO'; queuedCount?: number; openTripLeftAt?: string | null; connectionStatus: 'ONLINE' | 'SINAL_PERDIDO' | 'DESCONECTADO';
   currentDelivery: DashboardDelivery | null;
   lastLocation: { latitude: number; longitude: number; at: string | null; } | null;
 }
 
 interface DashboardData {
-  metrics: { totalToday: number; completed: number; pending: number; avgIdleTime: number; avgRouteTime: number; };
+  metrics: { totalToday: number; completed: number; pending: number; canceled?: number; avgIdleTime: number; avgRouteTime: number; };
   drivers: Array<DashboardDriver>;
   history: Array<DashboardDelivery>;
-  baseReturns?: Array<{ driverId: string; arrivedAt: string }>;
+  trips?: Array<DashboardTrip>;
 }
 
 const isSameDay = (isoString: string, nowMs: number) =>
@@ -139,7 +150,7 @@ export function Admin() {
         const list: DashboardDelivery[] = Array.isArray(response.data) ? response.data : [];
         setUnassigned(
           list
-            .filter(d => !d.driver && d.status !== 'DELIVERED')
+            .filter(d => !d.driver && d.status !== 'DELIVERED' && d.status !== 'CANCELED')
             .sort((a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime())
         );
       } catch {}
@@ -216,109 +227,83 @@ export function Admin() {
   const goToDetails = (deliveryId: string, fromHistory = false) =>
     navigate(`/admin/entrega/${deliveryId}`, fromHistory ? { state: { from: 'history', filters } } : undefined);
 
-  const getTripsByDriver = () => {
+  // Viagem = uma saída do motorista (do raio do mercado até a volta), registrada pelo servidor.
+  // Entrega atribuída enquanto ele já está na rua entra na viagem atual (recebe a saída dele).
+  const getTripsByDriver = (): Record<string, TripView[]> => {
     if (!data) return {};
-    const tripsByDriver: Record<string, any[]> = {};
-    const deliveriesByDriver: Record<string, DashboardDelivery[]> = {};
-    const returnsByDriver: Record<string, number[]> = {};
+    const allTrips = data.trips ?? [];
+    const ms = (iso?: string | null) => (iso ? new Date(iso).getTime() : null);
+    const sortKey = (d: DashboardDelivery) => ms(d.startedAt) ?? ms(d.createdAt) ?? 0;
 
-    if (data.baseReturns) {
-      data.baseReturns.forEach(br => {
-        if (!returnsByDriver[br.driverId]) returnsByDriver[br.driverId] = [];
-        returnsByDriver[br.driverId].push(new Date(br.arrivedAt).getTime());
-      });
-    }
-
+    const byDriver: Record<string, { name: string; deliveries: DashboardDelivery[] }> = {};
     data.history.forEach(d => {
-      if (!d.driver) return;
+      if (!d.driver || d.status === 'CANCELED') return;
       if (tripDriver !== 'ALL' && d.driver.id !== tripDriver) return;
-      if (!deliveriesByDriver[d.driver.name]) deliveriesByDriver[d.driver.name] = [];
-      deliveriesByDriver[d.driver.name].push(d);
+      if (!byDriver[d.driver.id]) byDriver[d.driver.id] = { name: d.driver.name, deliveries: [] };
+      byDriver[d.driver.id].deliveries.push(d);
     });
 
-    Object.keys(deliveriesByDriver).forEach(driverName => {
-      const sorted = deliveriesByDriver[driverName].sort((a, b) =>
-        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
-      );
+    const result: Record<string, TripView[]> = {};
 
-      if (sorted.length === 0) return;
+    Object.entries(byDriver).forEach(([driverId, { name, deliveries }]) => {
+      const views: Omit<TripView, 'numero'>[] = [];
 
-      const driverId = sorted[0].driverId!;
-      const driverReturns = (returnsByDriver[driverId] || []).sort((a, b) => a - b);
-
-      const trips: DashboardDelivery[][] = [];
-      let currentTrip = [sorted[0]];
-
-      for (let i = 1; i < sorted.length; i++) {
-        const prev = sorted[i - 1];
-        const curr = sorted[i];
-
-        const prevStart = prev.startedAt ? new Date(prev.startedAt).getTime() : new Date(prev.createdAt).getTime();
-        const currStart = curr.startedAt ? new Date(curr.startedAt).getTime() : new Date(curr.createdAt).getTime();
-        const prevEnd = prev.finishedAt ? new Date(prev.finishedAt).getTime() : now;
-
-        const furouCercaFisicamente = driverReturns.some(rt => rt > prevStart && rt <= currStart);
-        const timeoutSeguranca = (currStart - prevEnd) / 60000 > 90;
-
-        if (furouCercaFisicamente || timeoutSeguranca) {
-          trips.push(currentTrip);
-          currentTrip = [curr];
-        } else {
-          currentTrip.push(curr);
-        }
-      }
-      trips.push(currentTrip);
-
-      tripsByDriver[driverName] = trips.map((tripDeliveries, index) => {
-        const first = tripDeliveries[0];
-        const last = tripDeliveries[tripDeliveries.length - 1];
-        const nextTrip = trips[index + 1];
-        const nextTripStart = nextTrip
-          ? new Date(nextTrip[0].startedAt || nextTrip[0].createdAt).getTime()
-          : Infinity;
-
-        const firstStartMs = first.startedAt ? new Date(first.startedAt).getTime() : null;
-        const lastEndMs = last.finishedAt ? new Date(last.finishedAt).getTime() : null;
-
-        // Procura o primeiro retorno à base após o início desta viagem e antes da próxima
-        const retornoBaseMs = firstStartMs
-          ? driverReturns.find(rt => rt > firstStartMs && rt <= nextTripStart) ?? null
-          : null;
-
-        const isLastTrip = index === trips.length - 1;
-        const aindaFora = Boolean(
-          firstStartMs &&
-          !retornoBaseMs &&
-          (!lastEndMs || (isLastTrip && (now - lastEndMs) / 60000 <= 90))
-        );
-
-        let tempoForaMercado = 0;
-        if (firstStartMs) {
-          if (retornoBaseMs) {
-            tempoForaMercado = Math.max(0, Math.round((retornoBaseMs - firstStartMs) / 60000));
-          } else if (aindaFora) {
-            tempoForaMercado = Math.max(0, Math.round((now - firstStartMs) / 60000));
-          } else if (lastEndMs) {
-            tempoForaMercado = Math.max(0, Math.round((lastEndMs - firstStartMs) / 60000));
-          }
-        }
-
-        return {
-          id: `viagem-${driverName}-${index}`,
-          numero: index + 1,
-          dataReferencia: first.createdAt,
-          primeiraSaida: first.startedAt,
-          ultimaConclusao: last.finishedAt,
-          retornoBase: retornoBaseMs ? new Date(retornoBaseMs).toISOString() : null,
-          aindaFora,
-          qtdEntregas: tripDeliveries.length,
-          tempoForaMercado,
-          entregas: tripDeliveries
-        };
+      allTrips.filter(t => t.driverId === driverId).forEach(t => {
+        const entregas = deliveries.filter(d => d.tripId === t.id).sort((a, b) => sortKey(a) - sortKey(b));
+        if (entregas.length === 0) return;
+        const left = new Date(t.leftAt).getTime();
+        const back = ms(t.returnedAt);
+        views.push({
+          id: t.id, dataReferencia: t.leftAt, primeiraSaida: t.leftAt, retornoBase: t.returnedAt,
+          aindaFora: back === null, qtdEntregas: entregas.length, estimado: t.estimated, aguardandoSaida: false,
+          tempoForaMercado: Math.max(0, Math.round(((back ?? now) - left) / 60000)), entregas,
+        });
       });
+
+      // Entregas sem saída registrada
+      const orphans = deliveries.filter(d => !d.tripId);
+
+      // iniciadas, mas sem GPS de saída (dados antigos / celular sem sinal): agrupa por horário, valor estimado
+      const legacy = orphans.filter(d => d.startedAt).sort((a, b) => sortKey(a) - sortKey(b));
+      let group: DashboardDelivery[] = [];
+      const flush = () => {
+        if (group.length === 0) return;
+        const first = ms(group[0].startedAt)!;
+        const unfinished = group.some(d => !d.finishedAt);
+        const lastEnd = Math.max(...group.map(d => ms(d.finishedAt) ?? 0));
+        views.push({
+          id: `legacy-${group[0].id}`, dataReferencia: group[0].startedAt!, primeiraSaida: group[0].startedAt,
+          retornoBase: null, aindaFora: unfinished, qtdEntregas: group.length, estimado: true, aguardandoSaida: false,
+          tempoForaMercado: Math.max(0, Math.round(((unfinished ? now : lastEnd) - first) / 60000)), entregas: group,
+        });
+        group = [];
+      };
+      legacy.forEach(d => {
+        if (group.length > 0) {
+          const prevEnd = group.some(x => !x.finishedAt) ? now : Math.max(...group.map(x => ms(x.finishedAt) ?? 0));
+          if ((ms(d.startedAt)! - prevEnd) / 60000 > 90) flush();
+        }
+        group.push(d);
+      });
+      flush();
+
+      views.sort((a, b) => new Date(a.dataReferencia).getTime() - new Date(b.dataReferencia).getTime());
+      const numbered: TripView[] = views.map((v, index) => ({ ...v, numero: index + 1 }));
+
+      // ainda no mercado, esperando sair
+      const waiting = orphans.filter(d => !d.startedAt).sort((a, b) => sortKey(a) - sortKey(b));
+      if (waiting.length > 0) {
+        numbered.push({
+          id: `waiting-${driverId}`, numero: 0, dataReferencia: waiting[0].createdAt, primeiraSaida: null,
+          retornoBase: null, aindaFora: false, qtdEntregas: waiting.length, tempoForaMercado: 0,
+          estimado: false, aguardandoSaida: true, entregas: waiting,
+        });
+      }
+
+      if (numbered.length > 0) result[name] = numbered;
     });
 
-    return tripsByDriver;
+    return result;
   };
 
   if (loading || !data) {
@@ -332,7 +317,7 @@ export function Admin() {
   const viagensAgrupadas = getTripsByDriver();
 
   const todasViagens = Object.values(viagensAgrupadas).flat();
-  const viagensComTempo = todasViagens.filter(v => v.tempoForaMercado > 0);
+  const viagensComTempo = todasViagens.filter(v => !v.aguardandoSaida && !v.aindaFora && v.tempoForaMercado > 0);
   const mediaTempoFora = viagensComTempo.length > 0
     ? Math.round(viagensComTempo.reduce((acc, v) => acc + v.tempoForaMercado, 0) / viagensComTempo.length)
     : 0;
@@ -462,7 +447,7 @@ export function Admin() {
                   <>
                     <div className="flex items-center gap-2 flex-wrap mb-2">
                       <div className="bg-[#1A4B9F] text-white text-[10px] font-semibold px-2 py-1 rounded w-fit">
-                        Fora do mercado há {formatDuration(calcMinutesNumber(driver.currentDelivery.startedAt, now))}
+                        Fora do mercado há {formatDuration(calcMinutesNumber(driver.openTripLeftAt ?? driver.currentDelivery.startedAt, now))}
                       </div>
                       {!isSameDay(driver.currentDelivery.createdAt, now) && (
                         <span className="font-semibold bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full text-[10px]">
@@ -472,12 +457,21 @@ export function Admin() {
                     </div>
                     <p className="text-xs text-gray-500 leading-tight">
                       → Indo para {driver.currentDelivery?.customer?.neighborhood}
+                      {(driver.queuedCount ?? 0) > 0 && ` · +${driver.queuedCount} aguardando`}
                     </p>
                   </>
-                ) : (
+                ) : driver.status === 'VOLTANDO' ? (
+                  <div className="text-[#1A4B9F] text-xs font-semibold mb-1">
+                    Fora do mercado há {formatDuration(calcMinutesNumber(driver.openTripLeftAt, now))} · voltando
+                    {(driver.queuedCount ?? 0) > 0 && <span className="text-gray-500 font-medium"> · {driver.queuedCount} aguardando</span>}
+                  </div>
+                ) : driver.status === 'NO_MERCADO' ? (
                   <div className="text-[#E65100] text-xs font-semibold mb-1 flex items-center gap-1.5">
                     <Circle size={8} fill="currentColor" /> Disponível no mercado
+                    {(driver.queuedCount ?? 0) > 0 && <span className="text-gray-500 font-medium">· {driver.queuedCount} aguardando saída</span>}
                   </div>
+                ) : (
+                  <div className="text-gray-400 text-xs font-medium mb-1">Aguardando localização</div>
                 )}
               </div>
             ))}
@@ -570,7 +564,8 @@ export function Admin() {
                       <div className="flex flex-wrap gap-4 justify-between items-center mb-4 pb-3 border-b border-gray-50">
                         <div>
                           <div className="flex items-center gap-2">
-                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">Viagem #{viagem.numero}</span>
+                            <span className="text-[10px] font-bold text-gray-400 uppercase tracking-wider">{viagem.aguardandoSaida ? 'Aguardando saída' : `Viagem #${viagem.numero}`}</span>
+                            {viagem.estimado && <span className="text-[10px] font-semibold text-gray-400">(estimado, sem GPS)</span>}
                             {!isSameDay(viagem.dataReferencia, now) && (
                               <span className="font-semibold bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded-full text-[10px]">
                                 Dia {formatShortDate(viagem.dataReferencia)}
@@ -578,14 +573,12 @@ export function Admin() {
                             )}
                           </div>
                           <div className="text-sm font-semibold text-gray-800 mt-1 flex items-center gap-2">
-                            {viagem.primeiraSaida ? formatTimeWithDate(viagem.primeiraSaida, now) : 'Aguardando saída'}
+                            {viagem.primeiraSaida ? `Saiu às ${formatTimeWithDate(viagem.primeiraSaida, now)}` : 'Ainda no mercado'}
                             {viagem.primeiraSaida && <span className="text-gray-300">→</span>}
                             {viagem.retornoBase ? (
                               <span className="text-green-700">Voltou às {formatTimeWithDate(viagem.retornoBase, now)}</span>
                             ) : viagem.aindaFora ? (
                               <span className="text-blue-600 animate-pulse">Fora do mercado</span>
-                            ) : viagem.ultimaConclusao ? (
-                              <span>{formatTimeWithDate(viagem.ultimaConclusao, now)}</span>
                             ) : null}
                           </div>
                         </div>
@@ -609,7 +602,7 @@ export function Admin() {
                       </div>
 
                       <div className="space-y-1">
-                        {viagem.entregas.map((entrega: any, idx: number) => {
+                        {viagem.entregas.map((entrega, idx) => {
                           const isFromPreviousDay = !isSameDay(entrega.createdAt, now);
                           const horaInicio = entrega.startedAt ? formatTimeWithDate(entrega.startedAt, now) : null;
                           const horaFim = entrega.finishedAt ? formatTimeWithDate(entrega.finishedAt, now) : null;
@@ -722,6 +715,7 @@ export function Admin() {
                     <option value="PENDING">Pendentes</option>
                     <option value="IN_TRANSIT">Em andamento</option>
                     <option value="DELIVERED">Entregues</option>
+                    <option value="CANCELED">Canceladas</option>
                   </select>
                 </div>
               </div>
@@ -776,6 +770,8 @@ export function Admin() {
                           )}
                           {h.status === 'DELIVERED' ? (
                             <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-green-50 text-green-700">Entregue às {formatTime(h.finishedAt)}</span>
+                          ) : h.status === 'CANCELED' ? (
+                            <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-red-50 text-red-700">Cancelada</span>
                           ) : h.status === 'IN_TRANSIT' && h.startedAt ? (
                             <span className="text-[10px] font-bold px-2 py-1 rounded-md bg-blue-50 text-blue-700">Em rota</span>
                           ) : h.status === 'IN_TRANSIT' ? (

@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react';
 import axios from 'axios';
-import { Search, Package, Plus, Minus, Clock, UserPlus, X, MapPin, Truck, WifiOff, FileText, CheckCircle2, Banknote } from 'lucide-react';
+import { Search, Package, Plus, Minus, Clock, UserPlus, X, MapPin, Truck, WifiOff, FileText, CheckCircle2, Banknote, Pencil, Ban, Sprout } from 'lucide-react';
 import { PaymentChips } from '../../components/ui/PaymentBadges';
 import { formatBRL, parseMoney } from '../../utils/money';
 
@@ -24,8 +24,9 @@ interface ViaCepResult {
 }
 
 interface Customer {
-  id: string; name: string; street: string; number: string;
-  neighborhood?: string; reference?: string;
+  id: string; name: string; street?: string | null; number?: string | null;
+  neighborhood?: string; reference?: string; isRural?: boolean;
+  latitude?: number | null; longitude?: number | null;
 }
 
 interface User {
@@ -37,6 +38,7 @@ interface Delivery {
   isPaid: boolean; amount: number | null;
   description: string | null; status: string; createdAt: string;
   startedAt: string | null; finishedAt: string | null;
+  canceledAt?: string | null; cancelReason?: string | null;
   customer: Customer; driver: User | null;
 }
 
@@ -66,8 +68,15 @@ const formatElapsed = (iso: string, now: number) => {
   return m === 0 ? `${h}h` : `${h}h ${m}min`;
 };
 
+const formatStreet = (c: Customer) =>
+  [c.street, c.number].filter(Boolean).join(', ') || (c.isRural ? 'Sítio / zona rural' : '');
+
 const formatDestination = (c: Customer) =>
-  [c.neighborhood, [c.street, c.number].filter(Boolean).join(', ')].filter(Boolean).join(' — ');
+  [c.neighborhood, [c.street, c.number].filter(Boolean).join(', ')].filter(Boolean).join(' — ') ||
+  (c.isRural ? 'Sítio / zona rural' : '');
+
+const METHOD_LABEL: Record<string, string> = { CASH: 'Dinheiro', CREDIT_CARD: 'Cartão', DEBIT_CARD: 'Cartão', PIX: 'Pix' };
+const METHOD_CODE: Record<string, string> = { Dinheiro: 'CASH', Cartão: 'CREDIT_CARD', Pix: 'PIX' };
 
 type DriverState = 'AVAILABLE' | 'ASSIGNED' | 'ON_ROUTE';
 
@@ -108,11 +117,21 @@ export function Caixa() {
   const [expandedDrivers, setExpandedDrivers] = useState<Set<string>>(new Set());
   const [isOffline, setIsOffline] = useState(!navigator.onLine);
 
+  const [editing, setEditing] = useState<Delivery | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
+  const [editForm, setEditForm] = useState({
+    customerId: '', boxCount: 1, payment: 'Dinheiro', isPaid: false, amount: '', changeFor: '', description: '', driverId: ''
+  });
+  const [canceling, setCanceling] = useState<Delivery | null>(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [savingCancel, setSavingCancel] = useState(false);
+
   const [showCustomerModal, setShowCustomerModal] = useState(false);
   const [loadingCustomer, setLoadingCustomer] = useState(false);
   const [newCustomer, setNewCustomer] = useState({
     name: '', phone: '', street: '', number: '', neighborhood: 'Centro', reference: ''
   });
+  const [isRural, setIsRural] = useState(false);
 
   const [selectedCity, setSelectedCity] = useState('Registro');
   const [customCity, setCustomCity] = useState('');
@@ -242,6 +261,7 @@ export function Caixa() {
   };
 
   const resetCustomerModal = () => {
+    setIsRural(false);
     setNewCustomer({ name: '', phone: '', street: '', number: '', neighborhood: 'Centro', reference: '' });
     setSelectedCity('Registro'); setCustomCity(''); setRawNeighborhood('Centro'); setIsManualNeighborhood(false);
     setStreetSuggestions([]); setShowSuggestions(false); setShowCustomerModal(false);
@@ -252,7 +272,7 @@ export function Caixa() {
     if (!newCustomer.neighborhood) return alert('Por favor, informe o bairro.');
     setLoadingCustomer(true);
     try {
-      const response = await axios.post(`${API_URL}/customers`, newCustomer);
+      const response = await axios.post(`${API_URL}/customers`, { ...newCustomer, isRural });
       await fetchCustomers();
       setSelectedCustomerId(response.data.id);
       resetCustomerModal();
@@ -332,25 +352,89 @@ export function Caixa() {
     }
   };
 
-  const handleAssignDriver = async (deliveryId: string, driverId: string) => {
-    const currentDelivery = deliveries.find(d => d.id === deliveryId);
-    if (!currentDelivery) return;
+  const handleChangeDriver = async (delivery: Delivery, newDriverId: string) => {
+    if ((delivery.driver?.id ?? '') === newDriverId) return;
+    if (delivery.startedAt) {
+      const ok = window.confirm(
+        `Esta entrega já saiu com ${delivery.driver?.name.split(' ')[0] ?? 'o motorista'}. ` +
+        'Ao trocar, ela volta para "aguardando saída" com o novo motorista. Continuar?'
+      );
+      if (!ok) return;
+    }
     try {
-      await axios.put(`${API_URL}/deliveries/${deliveryId}`, {
-        boxCount: currentDelivery.boxCount,
-        paymentMethod: currentDelivery.paymentMethod,
-        changeFor: currentDelivery.changeFor,
-        isPaid: Boolean(currentDelivery.isPaid),
-        amount: currentDelivery.amount ?? null,
-        description: currentDelivery.description,
-        status: 'IN_TRANSIT',
-        customerId: currentDelivery.customer.id,
-        driverId: driverId,
-        latitude: -24.4882, longitude: -47.8447
-      });
+      await axios.put(`${API_URL}/deliveries/${delivery.id}`, { driverId: newDriverId || null });
       fetchDeliveries();
-    } catch (error) {
-      alert('Erro ao atribuir motorista.');
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Erro ao trocar o motorista.');
+    }
+  };
+
+  const openEdit = (d: Delivery) => {
+    setEditing(d);
+    setEditForm({
+      customerId: d.customer.id,
+      boxCount: d.boxCount || 1,
+      payment: METHOD_LABEL[d.paymentMethod] ?? 'Dinheiro',
+      isPaid: Boolean(d.isPaid),
+      amount: d.amount !== null && d.amount !== undefined ? String(d.amount).replace('.', ',') : '',
+      changeFor: d.changeFor ? String(d.changeFor).replace('.', ',') : '',
+      description: d.description ?? '',
+      driverId: d.driver?.id ?? '',
+    });
+  };
+
+  const handleSaveEdit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!editing) return;
+
+    const amountValue = parseMoney(editForm.amount);
+    const changeValue = parseMoney(editForm.changeFor);
+    const cash = !editForm.isPaid && editForm.payment === 'Dinheiro';
+
+    if (!editForm.isPaid && (amountValue === null || amountValue <= 0)) return alert('Informe o valor a cobrar do cliente.');
+    if (editForm.isPaid && editForm.amount.trim() !== '' && amountValue === null) return alert('O valor informado é inválido.');
+    if (cash && editForm.changeFor.trim() !== '') {
+      if (changeValue === null) return alert('O valor do troco é inválido.');
+      if (amountValue !== null && changeValue < amountValue) return alert('O troco deve ser maior ou igual ao valor a cobrar.');
+    }
+    if (editing.startedAt && (editing.driver?.id ?? '') !== editForm.driverId) {
+      const ok = window.confirm('Trocar o motorista de uma entrega que já saiu faz ela voltar para "aguardando saída". Continuar?');
+      if (!ok) return;
+    }
+
+    setSavingEdit(true);
+    try {
+      await axios.put(`${API_URL}/deliveries/${editing.id}`, {
+        customerId: editForm.customerId,
+        boxCount: Math.max(1, editForm.boxCount || 1),
+        paymentMethod: METHOD_CODE[editForm.payment],
+        isPaid: editForm.isPaid,
+        amount: amountValue,
+        changeFor: cash && changeValue !== null ? changeValue : null,
+        description: editForm.description.trim() || null,
+        driverId: editForm.driverId || null,
+      });
+      setEditing(null);
+      fetchDeliveries();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Erro ao salvar a entrega.');
+    } finally {
+      setSavingEdit(false);
+    }
+  };
+
+  const handleConfirmCancel = async () => {
+    if (!canceling) return;
+    setSavingCancel(true);
+    try {
+      await axios.put(`${API_URL}/deliveries/${canceling.id}/cancel`, { reason: cancelReason.trim() || null });
+      setCanceling(null);
+      setCancelReason('');
+      fetchDeliveries();
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Erro ao cancelar a entrega.');
+    } finally {
+      setSavingCancel(false);
     }
   };
 
@@ -359,12 +443,14 @@ export function Caixa() {
     const isToday = new Date(d.createdAt).toDateString() === todayKey;
     if (!isToday && d.status === 'DELIVERED') return false;
     if (!SHOW_FINISHED_TAB && d.status === 'DELIVERED') return false;
+    if (d.status === 'CANCELED' && !isToday) return false;
     return true;
   });
 
   const filteredDeliveries = visibleDeliveries.filter(d => d.status === activeTab);
   const countPending = visibleDeliveries.filter(d => d.status === 'PENDING').length;
   const countTransit = visibleDeliveries.filter(d => d.status === 'IN_TRANSIT').length;
+  const countCanceled = visibleDeliveries.filter(d => d.status === 'CANCELED').length;
 
   const driverStatuses = useMemo<DriverStatus[]>(() => {
     return drivers.map(driver => {
@@ -416,7 +502,7 @@ export function Caixa() {
                 className="flex-1 min-w-0 p-3 outline-none text-sm text-gray-700 bg-transparent cursor-pointer truncate"
               >
                 <option value="">Buscar por nome...</option>
-                {customers.map(c => <option key={c.id} value={c.id}>{c.name} {c.neighborhood ? `(${c.neighborhood})` : ''}</option>)}
+                {customers.map(c => <option key={c.id} value={c.id}>{c.isRural ? '🌾 ' : ''}{c.name} {c.neighborhood ? `(${c.neighborhood})` : ''}</option>)}
               </select>
               <button onClick={() => setShowCustomerModal(true)} className="bg-[#1A4B9F] text-white px-3 sm:px-4 hover:bg-blue-800 flex items-center justify-center gap-1 text-[10px] sm:text-xs font-semibold transition-colors flex-shrink-0">
                 <UserPlus size={14} className="sm:w-4 sm:h-4" /><span className="hidden sm:inline">Novo</span>
@@ -622,6 +708,9 @@ export function Caixa() {
             <button onClick={() => setActiveTab('IN_TRANSIT')} className={`flex-1 pb-3 text-xs font-semibold border-b-2 transition-colors ${activeTab === 'IN_TRANSIT' ? 'border-[#1A4B9F] text-[#1A4B9F]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
               Em Rota ({countTransit})
             </button>
+            <button onClick={() => setActiveTab('CANCELED')} className={`flex-1 pb-3 text-xs font-semibold border-b-2 transition-colors ${activeTab === 'CANCELED' ? 'border-[#E53E3E] text-[#E53E3E]' : 'border-transparent text-gray-400 hover:text-gray-600'}`}>
+              Canceladas ({countCanceled})
+            </button>
           </div>
 
           <div className="flex-1 overflow-y-auto pr-2 space-y-3">
@@ -632,7 +721,9 @@ export function Caixa() {
                 const isFromPreviousDay = !isSameDay(delivery.createdAt, now);
                 let tagColorClass = '';
                 let tagText = '';
-                if (delivery.status === 'DELIVERED') {
+                if (delivery.status === 'CANCELED') {
+                  tagColorClass = 'bg-red-50 text-red-700 border border-red-200'; tagText = 'Cancelada';
+                } else if (delivery.status === 'DELIVERED') {
                   tagColorClass = 'bg-[#008A2E] text-white';
                   tagText = `Entregue às ${new Date(delivery.finishedAt!).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`;
                 } else if (delivery.status === 'IN_TRANSIT' && delivery.startedAt) {
@@ -646,7 +737,8 @@ export function Caixa() {
                     <div className="flex justify-between items-start mb-2">
                       <div>
                         <h3 className="text-[#1A4B9F] font-bold text-sm uppercase">{delivery.customer.name}</h3>
-                        <p className="text-gray-800 text-xs mt-1">{delivery.customer.street}, {delivery.customer.number}{delivery.customer.neighborhood ? ` — ${delivery.customer.neighborhood}` : ''}</p>
+                        <p className="text-gray-800 text-xs mt-1">{formatStreet(delivery.customer)}{delivery.customer.neighborhood ? `${formatStreet(delivery.customer) ? ' — ' : ''}${delivery.customer.neighborhood}` : ''}
+                          {delivery.customer.isRural && <span className="ml-1.5 inline-flex items-center gap-0.5 text-[9px] font-bold bg-amber-100 text-amber-800 px-1.5 py-0.5 rounded-full"><Sprout size={10} /> SÍTIO{delivery.customer.latitude != null ? ' · localização salva' : ' · sem localização'}</span>}</p>
                       </div>
                       <div className="text-right">
                         <p className="text-gray-400 text-[10px]"># {delivery.id.substring(0, 5)}</p>
@@ -655,6 +747,9 @@ export function Caixa() {
                         </p>
                       </div>
                     </div>
+                    {delivery.status === 'CANCELED' && delivery.cancelReason && (
+                      <p className="text-xs text-red-600 font-medium mt-1">Motivo: {delivery.cancelReason}</p>
+                    )}
                     {delivery.description && (
                       <div className="bg-gray-50 border border-gray-100 p-2 rounded my-2">
                         <p className="text-xs text-gray-600 font-medium"><span className="font-bold">Obs:</span> {delivery.description}</p>
@@ -675,10 +770,30 @@ export function Caixa() {
                     {activeTab === 'PENDING' && !delivery.driver && (
                       <div className="mt-4 flex gap-2 flex-wrap">
                         {drivers.map(driver => (
-                          <button key={driver.id} onClick={() => handleAssignDriver(delivery.id, driver.id)} className="flex-1 text-white text-xs font-semibold py-2 px-2 rounded transition bg-[#1A4B9F] hover:bg-blue-800">
+                          <button key={driver.id} onClick={() => handleChangeDriver(delivery, driver.id)} className="flex-1 text-white text-xs font-semibold py-2 px-2 rounded transition bg-[#1A4B9F] hover:bg-blue-800">
                             Atribuir a {driver.name.split(' ')[0]}
                           </button>
                         ))}
+                      </div>
+                    )}
+
+                    {delivery.status !== 'CANCELED' && (
+                      <div className="mt-3 pt-3 border-t border-gray-100 flex items-center gap-2 flex-wrap">
+                        <button type="button" onClick={() => openEdit(delivery)} className="flex items-center gap-1 text-[11px] font-semibold text-[#1A4B9F] bg-blue-50 hover:bg-blue-100 px-2.5 py-1.5 rounded-md transition-colors">
+                          <Pencil size={12} /> Editar
+                        </button>
+                        <select
+                          value={delivery.driver?.id ?? ''}
+                          onChange={e => handleChangeDriver(delivery, e.target.value)}
+                          title="Trocar motorista"
+                          className="text-[11px] font-semibold text-gray-700 border border-gray-300 rounded-md px-2 py-1.5 bg-white outline-none focus:border-[#1A4B9F]"
+                        >
+                          <option value="">Sem motorista</option>
+                          {drivers.map(driver => <option key={driver.id} value={driver.id}>Motorista: {driver.name.split(' ')[0]}</option>)}
+                        </select>
+                        <button type="button" onClick={() => { setCanceling(delivery); setCancelReason(''); }} className="ml-auto flex items-center gap-1 text-[11px] font-semibold text-[#E53E3E] bg-red-50 hover:bg-red-100 px-2.5 py-1.5 rounded-md transition-colors">
+                          <Ban size={12} /> Cancelar
+                        </button>
                       </div>
                     )}
                   </div>
@@ -689,6 +804,108 @@ export function Caixa() {
         </div>
       </main>
 
+      {editing && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
+            <div className="bg-[#1A4B9F] text-white p-4 flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2"><Pencil size={18} /> Editar entrega # {editing.id.substring(0, 5)}</h3>
+              <button onClick={() => setEditing(null)} className="text-blue-200 hover:text-white"><X size={20} /></button>
+            </div>
+
+            <form onSubmit={handleSaveEdit} className="p-5 space-y-4 overflow-y-auto">
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Cliente</label>
+                <select value={editForm.customerId} onChange={e => setEditForm({ ...editForm, customerId: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] text-sm">
+                  {customers.map(c => <option key={c.id} value={c.id}>{c.isRural ? '🌾 ' : ''}{c.name} {c.neighborhood ? `(${c.neighborhood})` : ''}</option>)}
+                </select>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Volumes / caixas</label>
+                  <input type="number" min={1} value={editForm.boxCount} onChange={e => setEditForm({ ...editForm, boxCount: parseInt(e.target.value, 10) || 1 })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] text-sm" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Motorista</label>
+                  <select value={editForm.driverId} onChange={e => setEditForm({ ...editForm, driverId: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] text-sm">
+                    <option value="">Sem motorista</option>
+                    {drivers.map(d => <option key={d.id} value={d.id}>{d.name}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-2 gap-2">
+                <button type="button" onClick={() => setEditForm({ ...editForm, isPaid: true, changeFor: '' })} className={`p-2.5 border-2 rounded-lg text-xs font-extrabold ${editForm.isPaid ? 'bg-green-50 border-green-500 text-green-800' : 'bg-white border-gray-300 text-gray-500'}`}>JÁ FOI PAGO</button>
+                <button type="button" onClick={() => setEditForm({ ...editForm, isPaid: false })} className={`p-2.5 border-2 rounded-lg text-xs font-extrabold ${!editForm.isPaid ? 'bg-[#FFF3E0] border-[#E65100] text-[#9A3412]' : 'bg-white border-gray-300 text-gray-500'}`}>RECEBER NA ENTREGA</button>
+              </div>
+
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{editForm.isPaid ? 'Valor (R$) — já pago' : 'Valor a cobrar (R$) *'}</label>
+                  <input type="text" inputMode="decimal" placeholder="0,00" value={editForm.amount} onChange={e => setEditForm({ ...editForm, amount: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] text-sm font-bold" />
+                </div>
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Forma</label>
+                  <select value={editForm.payment} onChange={e => setEditForm({ ...editForm, payment: e.target.value, changeFor: e.target.value === 'Dinheiro' ? editForm.changeFor : '' })} className="w-full border border-gray-300 rounded-lg p-2.5 bg-white outline-none focus:border-[#1A4B9F] text-sm">
+                    {['Dinheiro', 'Cartão', 'Pix'].map(m => <option key={m} value={m}>{m}</option>)}
+                  </select>
+                </div>
+              </div>
+
+              {!editForm.isPaid && editForm.payment === 'Dinheiro' && (
+                <div>
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">Troco para R$</label>
+                  <input type="text" inputMode="decimal" placeholder="0,00" value={editForm.changeFor} onChange={e => setEditForm({ ...editForm, changeFor: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] text-sm" />
+                </div>
+              )}
+
+              <div>
+                <label className="block text-xs font-semibold text-gray-600 mb-1">Observação</label>
+                <textarea value={editForm.description} onChange={e => setEditForm({ ...editForm, description: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 text-sm outline-none focus:border-[#1A4B9F] resize-none h-20" />
+              </div>
+
+              <button type="submit" disabled={savingEdit} className="w-full bg-[#1A4B9F] text-white font-bold text-sm py-3 rounded-lg shadow-sm hover:bg-blue-800 transition-colors disabled:opacity-50">
+                {savingEdit ? 'Salvando...' : 'Salvar alterações'}
+              </button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {canceling && (
+        <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden">
+            <div className="bg-[#E53E3E] text-white p-4 flex justify-between items-center">
+              <h3 className="font-bold flex items-center gap-2"><Ban size={18} /> Cancelar entrega</h3>
+              <button onClick={() => setCanceling(null)} className="text-red-100 hover:text-white"><X size={20} /></button>
+            </div>
+            <div className="p-5 space-y-3">
+              <p className="text-sm text-gray-700">
+                Cancelar a entrega de <span className="font-bold">{canceling.customer.name}</span>?
+              </p>
+              {canceling.startedAt && (
+                <p className="text-xs font-semibold text-[#9A3412] bg-[#FFF3E0] border border-[#FFE0B2] rounded-lg p-2.5">
+                  Esta entrega já saiu com o motorista. Ele deixará de ver a entrega no app.
+                </p>
+              )}
+              <input
+                type="text"
+                value={cancelReason}
+                onChange={e => setCancelReason(e.target.value)}
+                placeholder="Motivo (opcional): cliente desistiu, endereço errado..."
+                className="w-full border border-gray-300 rounded-lg p-2.5 text-sm outline-none focus:border-[#E53E3E]"
+              />
+              <div className="flex gap-2">
+                <button onClick={() => setCanceling(null)} className="flex-1 py-2.5 rounded-lg border border-gray-300 text-sm font-semibold text-gray-600 hover:bg-gray-50">Voltar</button>
+                <button onClick={handleConfirmCancel} disabled={savingCancel} className="flex-1 py-2.5 rounded-lg bg-[#E53E3E] text-white text-sm font-bold hover:bg-red-700 disabled:opacity-50">
+                  {savingCancel ? 'Cancelando...' : 'Cancelar entrega'}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {showCustomerModal && (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4 backdrop-blur-sm">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden flex flex-col max-h-[92vh]">
@@ -698,6 +915,27 @@ export function Caixa() {
             </div>
 
             <form onSubmit={handleCreateCustomer} className="p-5 space-y-4 overflow-y-auto">
+              <button
+                type="button"
+                onClick={() => setIsRural(v => !v)}
+                className={`w-full flex items-start gap-3 text-left p-3 rounded-lg border-2 transition-colors ${isRural ? 'bg-amber-50 border-amber-400' : 'bg-white border-gray-200 hover:bg-gray-50'}`}
+              >
+                <Sprout size={20} className={isRural ? 'text-amber-600 mt-0.5' : 'text-gray-400 mt-0.5'} />
+                <span className="flex-1">
+                  <span className={`block text-xs font-extrabold ${isRural ? 'text-amber-800' : 'text-gray-600'}`}>
+                    {isRural ? 'É SÍTIO / ZONA RURAL' : 'É sítio / zona rural?'}
+                  </span>
+                  <span className="block text-[11px] text-gray-500 leading-snug">
+                    {isRural
+                      ? 'Rua e número são opcionais. Na primeira entrega o motorista marca a localização no celular e nas próximas já vai direto.'
+                      : 'Toque se o cliente mora em sítio, sem rua/número formal.'}
+                  </span>
+                </span>
+                <span className={`mt-0.5 w-9 h-5 rounded-full flex items-center px-0.5 transition-colors ${isRural ? 'bg-amber-500 justify-end' : 'bg-gray-300 justify-start'}`}>
+                  <span className="w-4 h-4 bg-white rounded-full shadow" />
+                </span>
+              </button>
+
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
                   <label className="block text-xs font-semibold text-gray-600 mb-1">Nome do Cliente / Local *</label>
@@ -764,8 +1002,8 @@ export function Caixa() {
 
               <div className="grid grid-cols-3 gap-4">
                 <div className="col-span-2 relative">
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Rua / Logradouro *</label>
-                  <input required type="text" value={newCustomer.street} onChange={e => { setNewCustomer({ ...newCustomer, street: e.target.value }); setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da rua..." />
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{isRural ? 'Rua / Estrada (opcional)' : 'Rua / Logradouro *'}</label>
+                  <input required={!isRural} type="text" value={newCustomer.street} onChange={e => { setNewCustomer({ ...newCustomer, street: e.target.value }); setShowSuggestions(true); }} onBlur={() => setTimeout(() => setShowSuggestions(false), 200)} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Digite o nome da rua..." />
 
                   {showSuggestions && streetSuggestions.length > 0 && (
                     <ul className="absolute z-30 mt-1 max-h-44 w-full overflow-y-auto rounded-lg border border-gray-200 bg-white shadow-lg">
@@ -779,14 +1017,14 @@ export function Caixa() {
                   )}
                 </div>
                 <div>
-                  <label className="block text-xs font-semibold text-gray-600 mb-1">Número *</label>
-                  <input required type="text" value={newCustomer.number} onChange={e => setNewCustomer({ ...newCustomer, number: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: 123" />
+                  <label className="block text-xs font-semibold text-gray-600 mb-1">{isRural ? 'Número (opc.)' : 'Número *'}</label>
+                  <input required={!isRural} type="text" value={newCustomer.number} onChange={e => setNewCustomer({ ...newCustomer, number: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: 123" />
                 </div>
               </div>
 
               <div>
-                <label className="block text-xs font-semibold text-gray-600 mb-1">Ponto de Referência (opcional)</label>
-                <input type="text" value={newCustomer.reference} onChange={e => setNewCustomer({ ...newCustomer, reference: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder="Ex: Próximo à praça, portão azul..." />
+                <label className="block text-xs font-semibold text-gray-600 mb-1">{isRural ? 'Como chegar / referência (ajuda o motorista na 1ª vez)' : 'Ponto de Referência (opcional)'}</label>
+                <input type="text" value={newCustomer.reference} onChange={e => setNewCustomer({ ...newCustomer, reference: e.target.value })} className="w-full border border-gray-300 rounded-lg p-2.5 outline-none focus:border-[#1A4B9F] focus:ring-1 focus:ring-[#1A4B9F] text-sm" placeholder={isRural ? 'Ex: Estrada do Rocio, km 3, porteira verde depois da igreja' : 'Ex: Próximo à praça, portão azul...'} />
               </div>
 
               <button type="submit" disabled={loadingCustomer} className="w-full bg-[#1A4B9F] text-white font-bold text-sm py-3 mt-2 rounded-lg shadow-sm hover:bg-blue-800 active:bg-blue-900 transition-colors disabled:opacity-50">

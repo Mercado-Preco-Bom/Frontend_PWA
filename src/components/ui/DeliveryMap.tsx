@@ -165,7 +165,7 @@ export function DeliveryMap({ drivers, deliveries = [], selectedDeliveryId = nul
                   </p>
                   <p>
                     <strong>Status:</strong>{' '}
-                    {driver.status === 'EM_ROTA' ? 'Em rota de entrega' : 'Disponível'}
+                    {driver.status === 'EM_ROTA' ? 'Em rota de entrega' : driver.status === 'VOLTANDO' ? 'Fora do mercado, voltando' : driver.status === 'NO_MERCADO' ? 'No mercado' : 'Sem posição'}
                   </p>
                   {driver.currentDelivery && (
                     <p>

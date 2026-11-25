@@ -15,6 +15,8 @@ interface DetailDelivery extends PaymentInfo {
   finishedAt: string | null;
   boxCount?: number;
   description?: string | null;
+  cancelReason?: string | null;
+  canceledAt?: string | null;
   startLatitude?: number | null;
   startLongitude?: number | null;
   endLatitude?: number | null;
@@ -22,8 +24,8 @@ interface DetailDelivery extends PaymentInfo {
   customer: {
     name: string;
     phone?: string | null;
-    street?: string;
-    number?: string;
+    street?: string | null;
+    number?: string | null;
     neighborhood?: string;
     reference?: string | null;
   };
@@ -59,6 +61,7 @@ const formatSpan = (fromIso: string, toIso: string) => {
 };
 
 const getStatusBadge = (delivery: DetailDelivery) => {
+  if (delivery.status === 'CANCELED') return { label: 'Cancelada', cls: 'bg-red-50 text-red-700 border border-red-200' };
   if (delivery.status === 'DELIVERED') return { label: 'Entregue', cls: 'bg-green-50 text-green-700 border border-green-200' };
   if (delivery.status === 'IN_TRANSIT' && delivery.startedAt) return { label: 'Em rota', cls: 'bg-[#1A4B9F] text-white' };
   if (delivery.status === 'IN_TRANSIT') return { label: 'Aguardando saída', cls: 'bg-[#FFF3E0] text-[#E65100] border border-[#FFE0B2]' };
@@ -233,6 +236,12 @@ export function DeliveryDetail() {
             <Package size={16} className="text-gray-400 flex-shrink-0" />
             {delivery.boxCount ?? 1} vol.
           </p>
+          {delivery.status === 'CANCELED' && (
+            <div className="bg-red-50 border border-red-100 p-3 rounded-lg mt-2 text-xs text-red-700 font-medium">
+              Entrega cancelada{delivery.canceledAt ? ` às ${new Date(delivery.canceledAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' })}` : ''}
+              {delivery.cancelReason ? ` — ${delivery.cancelReason}` : ''}
+            </div>
+          )}
           {delivery.description && (
             <div className="bg-gray-50 border border-gray-100 p-3 rounded-lg mt-2">
               <p className="text-xs text-gray-600 font-medium flex items-start gap-1.5">
