@@ -23,7 +23,6 @@ export default function App() {
             <Route path="/admin/entrega/:id" element={<DeliveryDetail />} />
           </Route>
         </Route>
-
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     </BrowserRouter>
